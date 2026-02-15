@@ -1,0 +1,1 @@
+#Gourisha'a code for first three visuals
