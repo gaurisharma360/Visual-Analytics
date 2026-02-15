@@ -1,4 +1,4 @@
-# JBI100-example-app
+# Visual Anlaytics APP
 
 ## About this app
 
