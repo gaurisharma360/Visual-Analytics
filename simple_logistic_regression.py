@@ -62,7 +62,9 @@ def train_model(X_train, y_train, use_pca=True, n_components=200, C=0.01):
         class_weight='balanced'  # Handle class imbalance
     )
     model.fit(X_train_scaled, y_train)
-
+      
+    train_accuracy = model.score(X_train_scaled, y_train)
+    print(f"Train Accuracy: {train_accuracy:.2%}")
     print("✓ Model trained successfully!")
 
     return model, scaler, pca
