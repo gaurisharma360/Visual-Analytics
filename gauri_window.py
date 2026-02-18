@@ -153,7 +153,7 @@ def evaluate(model, X_train, X_test, y_train, y_test,
     print("\nClassification Report (Segment-Level):")
     print(classification_report(segment_true, segment_preds))
 
-    print("\nConfusion Matrix (Segment-Level):")
+    print("\nConfusion Matrix (SegmentLevel):")
     print(confusion_matrix(segment_true, segment_preds))
 
 
