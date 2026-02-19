@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -83,12 +84,13 @@ def split_data(X, y, subjects):
 
 
 # --------------------------------------------------
-# 3️⃣ Train Model (Group-Safe CV)
+# 3️⃣ Train Model (Group-Safe CV with PCA)
 # --------------------------------------------------
 def train_model(X_train, y_train, subjects_train):
 
     pipe = Pipeline([
         ('scaler', StandardScaler()),
+        ('pca', PCA(random_state=42)),
         ('clf', LogisticRegression(
             solver='saga',
             max_iter=5000,
@@ -97,6 +99,7 @@ def train_model(X_train, y_train, subjects_train):
     ])
 
     param_grid = {
+        'pca__n_components': [50, 100, 150, 200, 300],  # Test different PCA dimensions
         'clf__C': [1, 0.1, 0.01, 0.005, 0.001],
         'clf__penalty': ['l1', 'l2'],
         'clf__class_weight': [None, 'balanced']
@@ -109,14 +112,22 @@ def train_model(X_train, y_train, subjects_train):
         param_grid,
         cv=gkf.split(X_train, y_train, groups=subjects_train),
         scoring='accuracy',
-        n_jobs=-1
+        n_jobs=-1,
+        verbose=1
     )
 
+    print("\nTraining with PCA dimensionality reduction...")
     grid.fit(X_train, y_train)
 
     print("\nBest Parameters:")
     print(grid.best_params_)
     print("Best CV Accuracy:", round(grid.best_score_, 4))
+
+    # Show explained variance for best PCA
+    best_pca = grid.best_estimator_.named_steps['pca']
+    explained_var = sum(best_pca.explained_variance_ratio_)
+    print(f"PCA Explained Variance: {explained_var:.4f} ({explained_var*100:.2f}%)")
+    print(f"PCA Components: {best_pca.n_components_}")
 
     return grid.best_estimator_
 
@@ -146,11 +157,28 @@ def evaluate(model, X_train, X_test, y_train, y_test):
 # --------------------------------------------------
 if __name__ == "__main__":
 
+    print("="*70)
+    print("LOGISTIC REGRESSION WITH PCA DIMENSIONALITY REDUCTION")
+    print("="*70)
+
     # Set binary=True if you want seizure vs non-seizure
     X, y, subjects = load_data(binary=False)
 
     X_train, X_test, y_train, y_test, subjects_train = split_data(X, y, subjects)
 
+    print(f"\nOriginal feature dimensions: {X_train.shape[1]}")
+    print("Testing PCA with dimensions: [50, 100, 150, 200, 300]")
+
     model = train_model(X_train, y_train, subjects_train)
 
     evaluate(model, X_train, X_test, y_train, y_test)
+
+    print("\n" + "="*70)
+    print("DIMENSIONALITY REDUCTION SUMMARY")
+    print("="*70)
+    best_pca = model.named_steps['pca']
+    print(f"Original dimensions: 4097")
+    print(f"Reduced dimensions: {best_pca.n_components_}")
+    print(f"Dimension reduction: {4097 - best_pca.n_components_} features removed")
+    print(f"Explained variance retained: {sum(best_pca.explained_variance_ratio_)*100:.2f}%")
+    print("="*70)
