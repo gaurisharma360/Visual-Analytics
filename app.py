@@ -4,6 +4,7 @@ from dash import html, dcc
 from dash.dependencies import Input, Output, State
 import pandas as pd
 import numpy as np
+import plotly.graph_objs as go
 from active_learning_model import ActiveLearningClassifier
 
 # Load EEG data (GLOBAL)
@@ -14,6 +15,7 @@ al_classifier = ActiveLearningClassifier(
     initial_labeled_size=50,  # Start with 50 labeled (10% cold start)
     batch_size=10,
     use_pca=False,
+    use_feature_engineering=True,  # Use feature engineering from gauri_lgr_withoutleakage.py
     random_state=42
 )
 al_classifier.load_data('bonn_eeg_combined.csv')
@@ -45,6 +47,54 @@ except Exception as e:
 current_batch_index = 0
 
 
+def create_eeg_waveform(sample_id):
+    """
+    Create a plotly figure showing the EEG waveform for a given sample
+
+    Args:
+        sample_id: Sample ID (e.g., 'Z001', 'F050')
+
+    Returns:
+        plotly figure object
+    """
+    # Get the raw EEG signal from the dataframe
+    sample_row = eeg_df[eeg_df['ID'] == sample_id]
+
+    if sample_row.empty:
+        # Return empty figure if sample not found
+        return go.Figure()
+
+    # Extract the signal (all columns except 'ID' and 'Y')
+    signal = sample_row.drop(['ID', 'Y'], axis=1).values.flatten()
+
+    # Create time axis (assuming 173.61 Hz sampling rate, 4097 samples ≈ 23.6 seconds)
+    fs = 173.61
+    time = np.arange(len(signal)) / fs
+
+    # Create figure
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=time,
+        y=signal,
+        mode='lines',
+        line=dict(color='#2c3e50', width=1),
+        name='EEG Signal'
+    ))
+
+    fig.update_layout(
+        title=f"EEG Signal: {sample_id}",
+        xaxis_title="Time (seconds)",
+        yaxis_title="Amplitude (μV)",
+        hovermode='x unified',
+        template='plotly_white',
+        margin=dict(l=50, r=20, t=40, b=40),
+        font=dict(size=12)
+    )
+
+    return fig
+
+
 if __name__ == '__main__':
 
     app.layout = html.Div(
@@ -67,11 +117,20 @@ if __name__ == '__main__':
                                 html.Span(f"Batch: 0/10", id='batch-progress')
                             ], style={'marginBottom': '20px', 'fontSize': '14px'}),
 
-                            # Current sample
+                            # Current sample name
                             html.Div([
-                                html.H5("Current Sample:", style={'display': 'inline', 'marginRight': '10px'}),
+                                html.H5("Sample ID: ", style={'display': 'inline', 'marginRight': '10px'}),
                                 html.H5(current_batch[0], id='current-sample-display', style={'display': 'inline', 'color': '#e74c3c'})
-                            ], style={'marginBottom': '20px'}),
+                            ], style={'marginBottom': '10px'}),
+
+                            # EEG Waveform Display
+                            html.Div([
+                                dcc.Graph(
+                                    id='eeg-waveform',
+                                    config={'displayModeBar': False},
+                                    style={'height': '300px'}
+                                )
+                            ], style={'marginBottom': '20px', 'border': '2px solid #3498db', 'borderRadius': '5px', 'padding': '10px'}),
 
                             # Category legend
                             html.Div([
@@ -137,7 +196,8 @@ if __name__ == '__main__':
          Output('feedback', 'children'),
          Output('feedback', 'style'),
          Output('labeled-count', 'children'),
-         Output('unlabeled-count', 'children')],
+         Output('unlabeled-count', 'children'),
+         Output('eeg-waveform', 'figure')],
         [Input('btn-a', 'n_clicks'),
          Input('btn-b', 'n_clicks'),
          Input('btn-c', 'n_clicks'),
@@ -153,7 +213,7 @@ if __name__ == '__main__':
 
         # Initial load
         if not callback_context.triggered:
-            return current_batch[0], f"Batch: 0/10", "0", "", {}, f"Labeled: {len(al_classifier.labeled_pool['X'])} | ", f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | "
+            return current_batch[0], f"Batch: 0/10", "0", "", {}, f"Labeled: {len(al_classifier.labeled_pool['X'])} | ", f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | ", create_eeg_waveform(current_batch[0])
 
         # Get which button was clicked
         button_id = callback_context.triggered[0]['prop_id'].split('.')[0]
@@ -161,7 +221,7 @@ if __name__ == '__main__':
         user_label = label_map.get(button_id)
 
         if not user_label:
-            return current_batch[batch_idx], f"Batch: {batch_idx}/10", str(batch_idx), "", {}, f"Labeled: {len(al_classifier.labeled_pool['X'])} | ", f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | "
+            return current_batch[batch_idx], f"Batch: {batch_idx}/10", str(batch_idx), "", {}, f"Labeled: {len(al_classifier.labeled_pool['X'])} | ", f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | ", create_eeg_waveform(current_batch[batch_idx])
 
         # Get current sample
         current_sample = current_batch[batch_idx]
@@ -204,18 +264,20 @@ if __name__ == '__main__':
         if batch_idx < batch_size:
             next_sample = current_batch[batch_idx]
             progress = f"Batch: {batch_idx}/{batch_size}"
+            waveform_fig = create_eeg_waveform(next_sample)
         else:
             next_sample = "✅ Batch Complete!"
             progress = f"Batch: {batch_size}/{batch_size} - Click Retrain!"
             feedback = "✅ Batch complete! Click 'Retrain Model' button."
             feedback_style = {'marginTop': '20px', 'padding': '15px', 'backgroundColor': '#d1ecf1',
                             'color': '#0c5460', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'}
+            waveform_fig = go.Figure()  # Empty figure
 
         # Update counts
         labeled_text = f"Labeled: {len(al_classifier.labeled_pool['X'])} | "
         unlabeled_text = f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | "
 
-        return next_sample, progress, str(batch_idx), feedback, feedback_style, labeled_text, unlabeled_text
+        return next_sample, progress, str(batch_idx), feedback, feedback_style, labeled_text, unlabeled_text, waveform_fig
 
     # Retrain callback
     @app.callback(
@@ -227,7 +289,8 @@ if __name__ == '__main__':
          Output('round-number', 'children'),
          Output('labeled-count', 'children', allow_duplicate=True),
          Output('unlabeled-count', 'children', allow_duplicate=True),
-         Output('round-info', 'children')],
+         Output('round-info', 'children'),
+         Output('eeg-waveform', 'figure', allow_duplicate=True)],
         Input('btn-train', 'n_clicks'),
         State('round-number', 'children'),
         prevent_initial_call=True
@@ -237,7 +300,7 @@ if __name__ == '__main__':
         import numpy as np
 
         if n_clicks == 0:
-            return current_batch[0], "Batch: 0/10", "0", "", {}, "1", f"Labeled: 50 | ", f"Unlabeled: 350 | ", f"Round 1 | Model Accuracy: {initial_accuracy:.1%}"
+            return current_batch[0], "Batch: 0/10", "0", "", {}, "1", f"Labeled: 50 | ", f"Unlabeled: 350 | ", f"Round 1 | Model Accuracy: {initial_accuracy:.1%}", create_eeg_waveform(current_batch[0])
 
         # Retrain model
         print(f"\n🔷 Retraining with {len(al_classifier.labeled_pool['X'])} labeled samples...")
@@ -272,7 +335,7 @@ if __name__ == '__main__':
                     labeled_text = f"Labeled: {len(al_classifier.labeled_pool['X'])} | "
                     unlabeled_text = f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | "
                     round_info = f"Complete! Final Accuracy: {accuracy:.1%}"
-                    return "Done!", "Complete", "10", feedback, feedback_style, round_str, labeled_text, unlabeled_text, round_info
+                    return "Done!", "Complete", "10", feedback, feedback_style, round_str, labeled_text, unlabeled_text, round_info, go.Figure()
 
                 current_batch = [al_classifier.unlabeled_pool['ids'][i] for i in uncertain_indices]
                 batch_size = len(current_batch)
@@ -296,7 +359,7 @@ if __name__ == '__main__':
             unlabeled_text = f"Unlabeled: {len(al_classifier.unlabeled_pool['X'])} | "
             round_info = f"Round {round_num} | Accuracy: {accuracy:.1%} | {len(current_batch)} uncertain samples (auto-labeled {auto_labeled_count})"
 
-            return current_batch[0], f"Batch: 0/{len(current_batch)}", "0", feedback, feedback_style, str(round_num), labeled_text, unlabeled_text, round_info
+            return current_batch[0], f"Batch: 0/{len(current_batch)}", "0", feedback, feedback_style, str(round_num), labeled_text, unlabeled_text, round_info, create_eeg_waveform(current_batch[0])
         else:
             feedback = f"🎉 Complete! Final accuracy: {accuracy:.1%}"
             feedback_style = {'marginTop': '20px', 'padding': '15px', 'backgroundColor': '#d4edda',
@@ -304,6 +367,6 @@ if __name__ == '__main__':
             labeled_text = f"Labeled: {len(al_classifier.labeled_pool['X'])} | "
             unlabeled_text = f"Unlabeled: 0 | "
             round_info = f"Complete! Final Accuracy: {accuracy:.1%}"
-            return "Done!", "Complete", "10", feedback, feedback_style, round_str, labeled_text, unlabeled_text, round_info
+            return "Done!", "Complete", "10", feedback, feedback_style, round_str, labeled_text, unlabeled_text, round_info, go.Figure()
 
     app.run(debug=False, dev_tools_ui=False)

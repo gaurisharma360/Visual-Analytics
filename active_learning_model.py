@@ -12,8 +12,10 @@ Uses uncertainty sampling to query a medical expert oracle for annotations.
 
 import numpy as np
 import pandas as pd
+from scipy.signal import welch
+from scipy.stats import skew, kurtosis
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupShuffleSplit, GroupKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.decomposition import PCA
@@ -100,13 +102,56 @@ class Oracle:
         self.correct_count = 0
 
 
+def extract_features(X_raw, fs=173.61):
+    """
+    Extract time-domain and frequency-domain features from raw EEG signals
+
+    Args:
+        X_raw: Raw signal data (n_samples, n_timesteps)
+        fs: Sampling frequency (default 173.61 Hz for Bonn dataset)
+
+    Returns:
+        Feature matrix (n_samples, n_features)
+    """
+    features = []
+
+    for signal in X_raw:
+        # ---------- Time Domain ----------
+        mean_val = np.mean(signal)
+        std_val = np.std(signal)
+        rms = np.sqrt(np.mean(signal**2))
+        peak_to_peak = np.ptp(signal)
+        skewness = skew(signal)
+        kurt = kurtosis(signal)
+
+        # ---------- Frequency Domain ----------
+        freqs, psd = welch(signal, fs=fs, nperseg=256)
+
+        def band_power(fmin, fmax):
+            idx = np.logical_and(freqs >= fmin, freqs <= fmax)
+            return np.sum(psd[idx])
+
+        delta = band_power(0.5, 4)
+        theta = band_power(4, 8)
+        alpha = band_power(8, 13)
+        beta = band_power(13, 30)
+
+        features.append([
+            mean_val, std_val, rms, peak_to_peak,
+            skewness, kurt,
+            delta, theta, alpha, beta
+        ])
+
+    return np.array(features)
+
+
 class ActiveLearningClassifier:
     """
     Active Learning wrapper for Logistic Regression with multi-class classification
     """
 
     def __init__(self, initial_labeled_size=50, batch_size=10,
-                 use_pca=False, n_components=100, random_state=42):
+                 use_pca=False, n_components=100, use_feature_engineering=True, random_state=42):
         """
         Initialize Active Learning Classifier
 
@@ -115,21 +160,25 @@ class ActiveLearningClassifier:
             batch_size: Number of samples to query in each iteration
             use_pca: Whether to use PCA for dimensionality reduction
             n_components: Number of PCA components (if use_pca=True)
+            use_feature_engineering: Whether to extract features from raw signals
             random_state: Random seed for reproducibility
         """
         self.initial_labeled_size = initial_labeled_size
         self.batch_size = batch_size
         self.use_pca = use_pca
         self.n_components = n_components
+        self.use_feature_engineering = use_feature_engineering
         self.random_state = random_state
 
         # Model components
         self.scaler = StandardScaler()
         self.pca = PCA(n_components=n_components) if use_pca else None
         self.model = LogisticRegression(
-            solver='lbfgs',
-            max_iter=1000,
-            random_state=random_state
+            solver='saga',
+            max_iter=5000,
+            random_state=random_state,
+            C=0.1,
+            penalty='l2'
         )
 
         # Data storage
@@ -157,8 +206,16 @@ class ActiveLearningClassifier:
 
         # Separate features and labels
         self.ids = df['ID'].values
-        self.X = df.drop(['ID', 'Y'], axis=1).values
+        X_raw = df.drop(['ID', 'Y'], axis=1).values
         self.y = df['Y'].values
+
+        # Apply feature engineering if enabled
+        if self.use_feature_engineering:
+            print("Extracting signal features (time + frequency domain)...")
+            self.X = extract_features(X_raw)
+            print(f"Features extracted: {X_raw.shape[1]} raw samples -> {self.X.shape[1]} features")
+        else:
+            self.X = X_raw
 
         print(f"Data loaded: {self.X.shape[0]} samples, {self.X.shape[1]} features")
         print(f"Classes: {np.unique(self.y)}")
