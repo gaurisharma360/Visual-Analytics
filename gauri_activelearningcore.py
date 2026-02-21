@@ -225,13 +225,13 @@ def simulate_active_learning(X_train, y_train, subjects_train,
 # MAIN
 # ==========================================================
 if __name__ == "__main__":
-
-    X_train, X_test, y_train, y_test, subjects_train = load_and_split(binary=False)
+#True for binary
+    X_train, X_test, y_train, y_test, subjects_train = load_and_split(binary=True)
 #rounds could be adjusted as per requirement
     simulate_active_learning(
         X_train, y_train, subjects_train,
         X_test, y_test,
         initial_fraction=0.2,
         batch_size=10,
-        max_rounds=30
+        max_rounds=8
     )
