@@ -24,23 +24,50 @@ from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+# ==========================================================
+#  HELPER FUNCTION (For Confusion Matrix Display)
+# ==========================================================
+def display_confusion_matrix(y_true, y_pred):
+    class_labels = ["Non-Seizure", "Seizure"]
+    cm = confusion_matrix(y_true, y_pred)
 
+    cm_df = pd.DataFrame(
+        cm,
+        index=[f"True {label}" for label in class_labels],
+        columns=[f"Pred {label}" for label in class_labels]
+    )
+
+    print("Confusion Matrix (Test):")
+    print(cm_df)
+
+    #Sensitivity (Seizure Recall) measures the model's ability to correctly identify seizure cases,
+    # while Specificity (Non-Seizure Recall) measures its ability to correctly identify non-seizure cases.
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) != 0 else 0
+    specificity = tn / (tn + fp) if (tn + fp) != 0 else 0
+    print(f"Sensitivity (Seizure Recall): {round(sensitivity,4)}")
+    print(f"Specificity (Non-Seizure Recall): {round(specificity,4)}")
 
 # ==========================================================
-# 1️⃣ FEATURE ENGINEERING
+# FEATURE ENGINEERING
 # ==========================================================
 def extract_features(X_raw, fs=173.61):
 
     features = []
 
     for signal in X_raw:
-
+        # mean value helps to understand the overall level of the signal, which can differ between seizure and non-seizure states.
         mean_val = np.mean(signal)
+        # std deviation captures the variability in the signal, which can be higher during seizures due to erratic brain activity.
         std_val = np.std(signal)
+        # RMS gives a measure of the signal's power, which can be elevated during seizures.
         rms = np.sqrt(np.mean(signal**2))
+        #peak-to-peak measures the range of the signal, which can be larger during seizures due to sudden spikes in brain activity.
         peak_to_peak = np.ptp(signal)
+        #skewness captures the asymmetry of the signal distribution, which can indicate abnormal brain activity during seizures.
         skewness = skew(signal)
+        # kutosis measures the "tailedness" of the signal distribution, which can be higher during seizures due to extreme values in the EEG signal.
         kurt_val = kurtosis(signal)
 
         freqs, psd = welch(signal, fs=fs, nperseg=256)
@@ -48,10 +75,14 @@ def extract_features(X_raw, fs=173.61):
         def band_power(fmin, fmax):
             idx = np.logical_and(freqs >= fmin, freqs <= fmax)
             return np.sum(psd[idx])
-
+        #each frequency band captures different aspects of brain activity.
+        #delta are commonly associated with deep sleep and can be more prominent during certain types of seizures.
         delta = band_power(0.5, 4)
+        #theta band is often linked to drowsiness and early stages of sleep, and can also be more active during seizures, especially in the temporal lobe.
         theta = band_power(4, 8)
+        #alpha rhythms are typically associated with relaxed wakefulness and can be disrupted during seizures, making them a useful feature for distinguishing between seizure and non-seizure states.
         alpha = band_power(8, 13)
+        #beta activity is associated with active thinking and focus, and can be reduced during seizures, making it another important feature for classification.
         beta  = band_power(13, 30)
 
         features.append([
@@ -64,7 +95,7 @@ def extract_features(X_raw, fs=173.61):
 
 
 # ==========================================================
-# 2️⃣ LOAD + SUBJECT SAFE SPLIT
+# LOAD + SUBJECT SAFE SPLIT
 # ==========================================================
 def load_and_split(binary=True):
 
@@ -110,7 +141,7 @@ def load_and_split(binary=True):
 
 
 # ==========================================================
-# 3️⃣ TRAIN MODEL (GROUP SAFE)
+# TRAIN MODEL WITH CROSS-VALIDATION (GROUP K-FOLD)
 # ==========================================================
 def train_model(X_train, y_train, subjects_train, show_params=False):
 
@@ -149,7 +180,7 @@ def train_model(X_train, y_train, subjects_train, show_params=False):
 
 
 # ==========================================================
-# 4️⃣ ACTIVE LEARNING SIMULATION
+# ACTIVE LEARNING SIMULATION
 # ==========================================================
 def simulate_active_learning(X_train, y_train, subjects_train,
                              X_test, y_test,
@@ -187,14 +218,24 @@ def simulate_active_learning(X_train, y_train, subjects_train,
         # Test performance
         test_pred = model.predict(X_test)
         test_acc = accuracy_score(y_test, test_pred)
-        cm = confusion_matrix(y_test, test_pred)
+        
 
         learning_curve.append((len(labeled_idx), test_acc))
 
         print("\nTrain Accuracy:", round(train_acc, 4))
         print("Test Accuracy :", round(test_acc, 4))
-        print("Confusion Matrix (Test):")
-        print(cm)
+        
+        #Confusion matrix with labeled display
+        display_confusion_matrix(y_test, test_pred)
+        
+        # For a complete picture of model performance, we also print the classification 
+        # report which includes precision, recall, and F1-score for each class.
+        print("\nClassification Report (Test):")
+        print(classification_report(
+            y_test,
+            test_pred,
+            target_names=["Non-Seizure", "Seizure"]
+        ))
 
         if len(unlabeled_idx) == 0:
             print("All samples labeled.")
