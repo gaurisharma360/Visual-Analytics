@@ -202,6 +202,11 @@ def compute_batch():
 
     return doctor_batch, batch_auto_count, pool_auto_count
 
+global train_history, test_history, round_history
+
+train_history = []
+test_history = []
+round_history = []
 # ==========================================================
 # INITIALIZATION FUNCTION (RESET SAFE)
 # ==========================================================
@@ -212,6 +217,17 @@ def initialize_active_learning():
     global model, current_batch
     global batch_auto_count, pool_auto_count
     global current_pointer, round_number, phase
+    global train_history, test_history, round_history
+    global sensitivity_history, specificity_history
+
+
+    # RESET LEARNING CURVE HISTORY
+    train_history = []
+    test_history = []
+    round_history = []
+
+    sensitivity_history = []
+    specificity_history = []
 
     n_initial = int(initial_fraction * len(X_train))
     indices = np.random.permutation(len(X_train))
@@ -219,7 +235,7 @@ def initialize_active_learning():
     labeled_idx = indices[:n_initial]
     unlabeled_idx = indices[n_initial:]
 
-    round_number = 1
+    round_number = 0
     phase = "annotation"
 
     model = train_model(
@@ -230,6 +246,51 @@ def initialize_active_learning():
 
     current_batch, batch_auto_count, pool_auto_count = compute_batch()
     current_pointer = 0
+def build_learning_curve():
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=round_history,
+        y=train_history,
+        mode='lines+markers',
+        name='Train Accuracy'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=round_history,
+        y=test_history,
+        mode='lines+markers',
+        name='Test Accuracy'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=round_history,
+        y=sensitivity_history,
+        mode='lines+markers',
+        name='Sensitivity'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=round_history,
+        y=specificity_history,
+        mode='lines+markers',
+        name='Specificity'
+    ))
+
+    fig.update_layout(
+        xaxis_title="Round",
+        yaxis_title="Performance",
+        yaxis=dict(range=[0,1]),
+        xaxis=dict(
+        range=[0, max(1, max(round_history))],
+        dtick=1
+    ),
+        template="plotly_white"
+    )
+
+    return fig
+
 
 # Initialize first time
 initialize_active_learning()
@@ -237,6 +298,7 @@ initialize_active_learning()
 # ==========================================================
 # DASH APP
 # ==========================================================
+
 
 app = dash.Dash(__name__)
 
@@ -259,7 +321,12 @@ app.layout = html.Div([
     html.Hr(),
 
     html.H3("Active Learning Core Output"),
-    html.Div(id="performance-metrics")
+    html.Div(id="performance-metrics"),
+    
+    html.Hr(),
+
+    html.H3("Learning Curves (Accuracy vs Rounds)"),
+    dcc.Graph(id="learning-curve")
 
 ])
 
@@ -273,6 +340,7 @@ app.layout = html.Div([
     Output("annotate-btn","disabled"),
     Output("train-btn","disabled"),
     Output("status-message","children"),
+    Output("learning-curve","figure"),
     Input("url","pathname"),
     Input("annotate-btn","n_clicks"),
     Input("train-btn","n_clicks"),
@@ -307,11 +375,20 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
         test_pred = model.predict(X_test)
         test_acc = accuracy_score(y_test, test_pred)
 
+        
+
         cm = confusion_matrix(y_test, test_pred)
         tn, fp, fn, tp = cm.ravel()
 
         sensitivity = tp/(tp+fn) if (tp+fn) else 0
         specificity = tn/(tn+fp) if (tn+fp) else 0
+        # Store baseline (Round 0) only once
+        if len(round_history) == 0:
+            train_history.append(train_acc)
+            test_history.append(test_acc)
+            sensitivity_history.append(sensitivity)
+            specificity_history.append(specificity)
+            round_history.append(0)
 
         class_report = classification_report(
             y_test, test_pred,
@@ -337,7 +414,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase"
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve()
 
     # =====================================================
     # ANNOTATION PHASE
@@ -351,14 +428,14 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
 
         if current_pointer >= len(current_batch):
             phase = "training"
-            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase"
+            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase",build_learning_curve()
 
         fig = go.Figure(data=[go.Scatter(
             y=X_raw_train[current_batch[current_pointer]],
             mode='lines'
         )])
 
-        return fig, dash.no_update, False, True, "Annotation Phase"
+        return fig, dash.no_update, False, True, "Annotation Phase",build_learning_curve()
 
     # =====================================================
     # TRAIN PHASE
@@ -387,6 +464,13 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
         sensitivity = tp/(tp+fn) if (tp+fn) else 0
         specificity = tn/(tn+fp) if (tn+fp) else 0
 
+
+        train_history.append(train_acc)
+        test_history.append(test_acc)
+        sensitivity_history.append(sensitivity)
+        specificity_history.append(specificity)
+        round_history.append(round_number)
+
         class_report = classification_report(
             y_test, test_pred,
             target_names=["Non-Seizure","Seizure"]
@@ -412,7 +496,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
                 pool_auto_count
             )
 
-            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED"
+            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED",build_learning_curve()
 
         terminal_block = build_terminal_report(
             round_number,
@@ -433,7 +517,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase"
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve()
 
 # ==========================================================
 # RUN SERVER
