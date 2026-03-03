@@ -291,6 +291,39 @@ def build_learning_curve():
 
     return fig
 
+def build_confusion_heatmap(cm):
+
+    fig = go.Figure(data=go.Heatmap(
+        z=cm,
+        x=["Pred: Non-Seizure", "Pred: Seizure"],
+        y=["Actual: Non-Seizure", "Actual: Seizure"],
+        text=cm,
+        texttemplate="%{text}",
+        colorscale="Blues"
+    ))
+
+    fig.update_layout(title="Confusion Matrix")
+
+    return fig
+
+def build_data_donut():
+
+    total = len(X_train)
+    labeled = len(labeled_idx)
+    unlabeled = total - labeled
+    doctor = len(current_batch)
+    confident = unlabeled - doctor
+
+    fig = go.Figure(data=[go.Pie(
+        labels=["Labeled", "Confident (Auto)", "Needs Doctor"],
+        values=[labeled, confident, doctor],
+        hole=0.5
+    )])
+
+    fig.update_layout(title="Data State Distribution")
+
+    return fig
+
 
 # Initialize first time
 initialize_active_learning()
@@ -315,6 +348,14 @@ app.layout = html.Div([
 
     html.Hr(),
 
+    # Top row
+    html.Div([
+        dcc.Graph(id="confusion-heatmap", style={"width":"50%", "display":"inline-block"}),
+        dcc.Graph(id="data-donut", style={"width":"50%", "display":"inline-block"})
+    ]),
+
+    html.Hr(),
+
     html.H3("EEG Annotation Pane"),
     dcc.Graph(id="eeg-graph"),
 
@@ -326,7 +367,8 @@ app.layout = html.Div([
     html.Hr(),
 
     html.H3("Learning Curves (Accuracy vs Rounds)"),
-    dcc.Graph(id="learning-curve")
+    dcc.Graph(id="learning-curve"),
+
 
 ])
 
@@ -341,6 +383,8 @@ app.layout = html.Div([
     Output("train-btn","disabled"),
     Output("status-message","children"),
     Output("learning-curve","figure"),
+    Output("confusion-heatmap","figure"),
+    Output("data-donut","figure"),
     Input("url","pathname"),
     Input("annotate-btn","n_clicks"),
     Input("train-btn","n_clicks"),
@@ -379,6 +423,9 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
 
         cm = confusion_matrix(y_test, test_pred)
         tn, fp, fn, tp = cm.ravel()
+        heatmap_fig = build_confusion_heatmap(cm)
+        donut_fig = build_data_donut()
+        
 
         sensitivity = tp/(tp+fn) if (tp+fn) else 0
         specificity = tn/(tn+fp) if (tn+fp) else 0
@@ -414,7 +461,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve()
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve(), heatmap_fig, donut_fig
 
     # =====================================================
     # ANNOTATION PHASE
@@ -425,17 +472,22 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
         labeled_idx = np.append(labeled_idx, sample_id)
         unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
         current_pointer += 1
+    # Recompute figures (needed for 9-output schema)
+        test_pred = model.predict(X_test)
+        cm = confusion_matrix(y_test, test_pred)
 
+        heatmap_fig = build_confusion_heatmap(cm)
+        donut_fig = build_data_donut()
         if current_pointer >= len(current_batch):
             phase = "training"
-            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase",build_learning_curve()
+            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase",build_learning_curve(), heatmap_fig, donut_fig
 
         fig = go.Figure(data=[go.Scatter(
             y=X_raw_train[current_batch[current_pointer]],
             mode='lines'
         )])
 
-        return fig, dash.no_update, False, True, "Annotation Phase",build_learning_curve()
+        return fig, dash.no_update, False, True, "Annotation Phase",build_learning_curve(),heatmap_fig, donut_fig
 
     # =====================================================
     # TRAIN PHASE
@@ -460,6 +512,9 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
 
         cm = confusion_matrix(y_test, test_pred)
         tn, fp, fn, tp = cm.ravel()
+        
+        heatmap_fig = build_confusion_heatmap(cm)
+        donut_fig = build_data_donut()
 
         sensitivity = tp/(tp+fn) if (tp+fn) else 0
         specificity = tn/(tn+fp) if (tn+fp) else 0
@@ -496,7 +551,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
                 pool_auto_count
             )
 
-            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED",build_learning_curve()
+            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED",build_learning_curve(), heatmap_fig, donut_fig
 
         terminal_block = build_terminal_report(
             round_number,
@@ -517,8 +572,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve()
-
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve(), heatmap_fig, donut_fig
 # ==========================================================
 # RUN SERVER
 # ==========================================================
