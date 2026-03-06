@@ -156,7 +156,7 @@ def train_model(X_train, y_train, subjects_train, show_params=False):
 
     param_grid = {
         'clf__C': [1, 0.1, 0.01],
-        'clf__penalty': ['l1', 'l2']
+        'clf__penalty': ['l1','l2']
     }
 
     gkf = GroupKFold(n_splits=5)
@@ -182,11 +182,12 @@ def train_model(X_train, y_train, subjects_train, show_params=False):
 # ==========================================================
 # ACTIVE LEARNING SIMULATION
 # ==========================================================
+#these are default values for the function, they can be adjusted as per requirement during the function call in the main block.
 def simulate_active_learning(X_train, y_train, subjects_train,
                              X_test, y_test,
                              initial_fraction=0.2,
                              batch_size=10,
-                             max_rounds=8):
+                             max_rounds=8,confidence_threshold=0.6):
 
     print("\nStarting Active Learning Simulation...")
 
@@ -197,6 +198,7 @@ def simulate_active_learning(X_train, y_train, subjects_train,
     unlabeled_idx = indices[n_initial:]
 
     learning_curve = []
+    total_oracle_annotations = 0
 
     for iteration in range(max_rounds):
 
@@ -241,18 +243,54 @@ def simulate_active_learning(X_train, y_train, subjects_train,
             print("All samples labeled.")
             break
 
-        # Compute uncertainty
+         # ============================
+        # HYBRID UNCERTAINTY SAMPLING
+        # ============================
         probs = model.predict_proba(X_train[unlabeled_idx])
-        uncertainty = 1 - np.max(probs, axis=1)
+        max_probs = np.max(probs, axis=1)
 
-        # Select most uncertain samples
-        query_order = np.argsort(uncertainty)[-batch_size:]
-        queried = unlabeled_idx[query_order]
+        print(f"\nConfidence threshold: {confidence_threshold}")
+        print(f"Min confidence in pool : {round(np.min(max_probs),4)}")
+        print(f"Mean confidence in pool: {round(np.mean(max_probs),4)}")
 
-        print(f"\nDoctor annotates {len(queried)} uncertain samples...")
+        # Step 1: Select samples below confidence threshold
+        low_conf_mask = max_probs < confidence_threshold
+        candidate_indices = unlabeled_idx[low_conf_mask]
+        candidate_conf = max_probs[low_conf_mask]
 
+        print(f"Samples below threshold: {len(candidate_indices)}")
+
+        # If model confident on all → stop
+        if len(candidate_indices) == 0:
+            print("Model confident on all remaining samples.")
+            print("Stopping Active Learning.")
+            break
+
+        # Step 2: Limit to batch_size
+        if len(candidate_indices) > batch_size:
+            sorted_idx = np.argsort(candidate_conf)  # lowest confidence first
+            selected = sorted_idx[:batch_size]
+            queried = candidate_indices[selected]
+        else:
+            queried = candidate_indices
+
+        # ============================
+        # Annotation Statistics
+        # ============================
+        oracle_count = len(queried)
+        auto_classified_count = len(unlabeled_idx) - oracle_count
+        total_oracle_annotations += oracle_count
+
+        print(f"\nDoctor annotates {oracle_count} uncertain EEG samples...")
+        print("Annotation Summary:")
+        print(f"Oracle labeled this round      : {oracle_count}")
+        print(f"Automatically classified (pool): {auto_classified_count}")
+        print(f"Cumulative oracle annotations  : {total_oracle_annotations}")
+
+        # Update labeled and unlabeled pools
         labeled_idx = np.concatenate([labeled_idx, queried])
         unlabeled_idx = np.setdiff1d(unlabeled_idx, queried)
+
 
     # Print learning curve summary
     print("\n" + "="*70)
@@ -274,5 +312,5 @@ if __name__ == "__main__":
         X_test, y_test,
         initial_fraction=0.2,
         batch_size=10,
-        max_rounds=8
+        max_rounds=8, confidence_threshold=0.7
     )
