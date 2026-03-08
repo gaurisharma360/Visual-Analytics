@@ -181,13 +181,11 @@ confidence_threshold = 0.7
 # HYBRID BATCH LOGIC
 # ==========================================================
 
-def compute_batch():
+def compute_batch(confidence_threshold):
 
     probs = model.predict_proba(X_train[unlabeled_idx])
     max_probs = np.max(probs, axis=1)
     uncertainty = 1 - max_probs
-
-    pool_auto_count = np.sum(max_probs >= confidence_threshold)
 
     sorted_idx = np.argsort(uncertainty)[::-1]
     top_k = sorted_idx[:batch_size]
@@ -200,6 +198,12 @@ def compute_batch():
 
     batch_auto_count = len(batch_candidates) - len(doctor_batch)
 
+    confident_mask = max_probs >= confidence_threshold
+
+    batch_mask = np.zeros(len(unlabeled_idx), dtype=bool)
+    batch_mask[top_k] = True
+
+    pool_auto_count = np.sum(confident_mask & ~batch_mask)
     return doctor_batch, batch_auto_count, pool_auto_count
 
 global train_history, test_history, round_history
@@ -244,7 +248,7 @@ def initialize_active_learning():
         subjects_train[labeled_idx]
     )
 
-    current_batch, batch_auto_count, pool_auto_count = compute_batch()
+    current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_threshold)
     current_pointer = 0
 def build_learning_curve():
 
@@ -308,22 +312,30 @@ def build_confusion_heatmap(cm):
 
 def build_data_donut():
 
-    total = len(X_train)
     labeled = len(labeled_idx)
-    unlabeled = total - labeled
-    doctor = len(current_batch)
-    confident = unlabeled - doctor
+    doctor = len(current_batch)           # uncertain samples in batch
+    auto_batch = batch_auto_count         # confident inside batch
+    auto_pool = pool_auto_count           # confident outside batch
 
     fig = go.Figure(data=[go.Pie(
-        labels=["Labeled", "Confident (Auto)", "Needs Doctor"],
-        values=[labeled, confident, doctor],
+        labels=[
+            "Labeled",
+            "Auto (Pool)",
+            "Auto (Batch)",
+            "Needs Doctor"
+        ],
+        values=[
+            labeled,
+            auto_pool,
+            auto_batch,
+            doctor
+        ],
         hole=0.5
     )])
 
     fig.update_layout(title="Data State Distribution")
-
+    
     return fig
-
 
 # Initialize first time
 initialize_active_learning()
@@ -345,6 +357,28 @@ app.layout = html.Div([
 
     html.Button("Annotate (Oracle)", id="annotate-btn"),
     html.Button("Train Model", id="train-btn", disabled=True),
+
+    html.Hr(),
+
+    html.H4("Confidence Threshold"),
+
+    dcc.Slider(
+        id="confidence-slider",
+        min=0.5,
+        max=0.99,
+        step=0.01,
+        value=0.7,
+        marks={
+            0.5: "0.5",
+            0.6: "0.6",
+            0.7: "0.7",
+            0.8: "0.8",
+            0.9: "0.9",
+            0.99: "0.99"
+        },
+    ),
+
+    html.Div(id="confidence-value", style={"marginBottom":"20px"}),
 
     html.Hr(),
 
@@ -381,6 +415,7 @@ app.layout = html.Div([
     Output("performance-metrics","children"),
     Output("annotate-btn","disabled"),
     Output("train-btn","disabled"),
+    Output("confidence-value","children"),
     Output("status-message","children"),
     Output("learning-curve","figure"),
     Output("confusion-heatmap","figure"),
@@ -388,9 +423,10 @@ app.layout = html.Div([
     Input("url","pathname"),
     Input("annotate-btn","n_clicks"),
     Input("train-btn","n_clicks"),
+    Input("confidence-slider","value"),
     prevent_initial_call=False
 )
-def update_dashboard(pathname, annotate_clicks, train_clicks):
+def update_dashboard(pathname, annotate_clicks, train_clicks, confidence_value):
 
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
@@ -461,8 +497,57 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve(), heatmap_fig, donut_fig
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",f"Confidence Threshold: {confidence_value}",build_learning_curve(), heatmap_fig, donut_fig
+    
+    # =====================================================
+    # SLIDER UPDATE (ONLY BETWEEN ROUNDS)
+    # =====================================================
+    if trigger_id == "confidence-slider":
 
+        # allow change only when we are not annotating a batch
+        if phase != "annotation":
+            return (
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                f"Confidence Threshold: {confidence_value}",
+                "Slider only active between rounds",
+                dash.no_update,
+                dash.no_update,
+                dash.no_update
+            )
+
+        # recompute batch using new threshold
+        current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_value)
+        current_pointer = 0
+
+        # rebuild figures
+        test_pred = model.predict(X_test)
+        cm = confusion_matrix(y_test, test_pred)
+
+        heatmap_fig = build_confusion_heatmap(cm)
+        donut_fig = build_data_donut()
+
+        if len(current_batch) > 0:
+            fig = go.Figure(data=[go.Scatter(
+                y=X_raw_train[current_batch[0]],
+                mode='lines'
+            )])
+        else:
+            fig = go.Figure()
+
+        return (
+            fig,
+            dash.no_update,
+            False,
+            True,
+            f"Confidence Threshold: {confidence_value}",
+            "Annotation Phase",
+            build_learning_curve(),
+            heatmap_fig,
+            donut_fig
+        )
     # =====================================================
     # ANNOTATION PHASE
     # =====================================================
@@ -480,14 +565,16 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
         donut_fig = build_data_donut()
         if current_pointer >= len(current_batch):
             phase = "training"
-            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase",build_learning_curve(), heatmap_fig, donut_fig
+            return go.Figure(), html.Pre("Round complete. Please Train the Model."), True, False, "Training Phase",f"Confidence Threshold: {confidence_value}",build_learning_curve(), heatmap_fig, donut_fig
+
 
         fig = go.Figure(data=[go.Scatter(
             y=X_raw_train[current_batch[current_pointer]],
             mode='lines'
         )])
 
-        return fig, dash.no_update, False, True, "Annotation Phase",build_learning_curve(),heatmap_fig, donut_fig
+        return fig, dash.no_update, False, True, "Annotation Phase",f"Confidence Threshold: {confidence_value}",build_learning_curve(), heatmap_fig, donut_fig
+
 
     # =====================================================
     # TRAIN PHASE
@@ -514,7 +601,7 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
         tn, fp, fn, tp = cm.ravel()
         
         heatmap_fig = build_confusion_heatmap(cm)
-        donut_fig = build_data_donut()
+        
 
         sensitivity = tp/(tp+fn) if (tp+fn) else 0
         specificity = tn/(tn+fp) if (tn+fp) else 0
@@ -531,7 +618,8 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             target_names=["Non-Seizure","Seizure"]
         )
 
-        current_batch, batch_auto_count, pool_auto_count = compute_batch()
+        current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_value)
+        donut_fig = build_data_donut()
         current_pointer = 0
         phase = "annotation"
 
@@ -551,7 +639,8 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
                 pool_auto_count
             )
 
-            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED",build_learning_curve(), heatmap_fig, donut_fig
+            return go.Figure(), html.Pre(terminal_block + "\nACTIVE LEARNING COMPLETE."), True, True, "STOPPED",f"Confidence Threshold: {confidence_value}",build_learning_curve(), heatmap_fig, donut_fig
+
 
         terminal_block = build_terminal_report(
             round_number,
@@ -572,7 +661,8 @@ def update_dashboard(pathname, annotate_clicks, train_clicks):
             mode='lines'
         )])
 
-        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",build_learning_curve(), heatmap_fig, donut_fig
+        return fig, html.Pre(terminal_block), False, True, "Annotation Phase",f"Confidence Threshold: {confidence_value}",build_learning_curve(), heatmap_fig, donut_fig
+
 # ==========================================================
 # RUN SERVER
 # ==========================================================
