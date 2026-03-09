@@ -24,6 +24,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.decomposition import PCA
 
+# Try to import UMAP
+try:
+    from umap import UMAP
+    UMAP_AVAILABLE = True
+except ImportError:
+    UMAP_AVAILABLE = False
+    print("Warning: UMAP not installed. Install with: pip install umap-learn")
+
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
@@ -181,6 +189,7 @@ unlabeled_idx = indices[n_initial:].copy()
 current_round = 0
 model = None
 pca_model = None
+umap_model = None
 
 # History tracking
 learning_curve = []
@@ -208,6 +217,18 @@ X_test_pca = pca_model.transform(X_test_scaled)
 
 print(f"PCA variance explained: {pca_model.explained_variance_ratio_}")
 
+# Fit UMAP if available
+if UMAP_AVAILABLE:
+    print("Fitting UMAP for embedding visualization...")
+    umap_model = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+    X_train_umap = umap_model.fit_transform(X_train_scaled)
+    X_test_umap = umap_model.transform(X_test_scaled)
+    print("UMAP embedding complete!")
+else:
+    X_train_umap = None
+    X_test_umap = None
+    print("UMAP not available - only PCA will be shown")
+
 # Initial predictions and uncertainty
 train_probs = model.predict_proba(X_train[labeled_idx])
 train_uncertainty = 1 - np.max(train_probs, axis=1)
@@ -228,15 +249,13 @@ app.layout = html.Div([
     html.Div([
         html.H1("EEG Active Learning Dashboard - Part 1",
                 style={'textAlign': 'center', 'color': '#2c3e50', 'marginBottom': '10px'}),
-        html.H3("PEAX-Inspired Visual Exploration",
-                style={'textAlign': 'center', 'color': '#7f8c8d', 'marginTop': '0px'}),
     ], style={'backgroundColor': '#ecf0f1', 'padding': '20px', 'borderRadius': '10px', 'marginBottom': '20px'}),
 
     # Control Panel
     html.Div([
         html.Div([
             html.Label("Active Learning Round:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-            html.Span(id='round-display', children=f"Round {current_round + 1}/{max_rounds}",
+            html.Span(id='round-display', children=f"Round {current_round}/{max_rounds}",
                      style={'fontSize': '18px', 'color': '#2980b9', 'marginRight': '30px'}),
 
             html.Label("Labeled Samples:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -287,26 +306,44 @@ app.layout = html.Div([
 
     # Two columns layout
     html.Div([
-        # Left Column - PCA Embedding
+        # Left Column - Embedding View (PCA/UMAP)
         html.Div([
-            html.H3("1. PCA Embedding View", style={'textAlign': 'center', 'color': '#34495e'}),
+            html.H3("1. Embedding View", id='embedding-title', style={'textAlign': 'center', 'color': '#34495e'}),
             html.P("2D projection of EEG feature space (Training Set)",
                    style={'textAlign': 'center', 'fontSize': '12px', 'color': '#7f8c8d'}),
             dcc.Graph(id='pca-embedding', style={'height': '600px'}),
 
             html.Div([
-                html.Label("View Mode:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-                dcc.RadioItems(
-                    id='pca-view-mode',
-                    options=[
-                        {'label': ' Label Status', 'value': 'label_status'},
-                        {'label': ' True Class', 'value': 'true_class'},
-                        {'label': ' Uncertainty', 'value': 'uncertainty'}
-                    ],
-                    value='label_status',
-                    inline=True,
-                    style={'fontSize': '14px'}
-                )
+                # Embedding Method Toggle
+                html.Div([
+                    html.Label("Embedding Method:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                    dcc.RadioItems(
+                        id='embedding-method',
+                        options=[
+                            {'label': ' PCA', 'value': 'pca'},
+                            {'label': ' UMAP', 'value': 'umap', 'disabled': not UMAP_AVAILABLE}
+                        ],
+                        value='pca',
+                        inline=True,
+                        style={'fontSize': '14px'}
+                    )
+                ], style={'marginBottom': '10px'}),
+
+                # View Mode
+                html.Div([
+                    html.Label("View Mode:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                    dcc.RadioItems(
+                        id='pca-view-mode',
+                        options=[
+                            {'label': ' Label Status', 'value': 'label_status'},
+                            {'label': ' True Class', 'value': 'true_class'},
+                            {'label': ' Uncertainty', 'value': 'uncertainty'}
+                        ],
+                        value='label_status',
+                        inline=True,
+                        style={'fontSize': '14px'}
+                    )
+                ])
             ], style={'textAlign': 'center', 'marginTop': '10px', 'padding': '10px', 'backgroundColor': '#f8f9fa', 'borderRadius': '5px'})
         ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'padding': '10px'}),
 
@@ -340,12 +377,14 @@ app.layout = html.Div([
      Output('status-message', 'style'),
      Output('round-display', 'children'),
      Output('labeled-count', 'children'),
-     Output('test-accuracy', 'children')],
+     Output('test-accuracy', 'children'),
+     Output('embedding-title', 'children')],
     [Input('next-round-btn', 'n_clicks'),
      Input('reset-btn', 'n_clicks'),
-     Input('pca-view-mode', 'value')]
+     Input('pca-view-mode', 'value'),
+     Input('embedding-method', 'value')]
 )
-def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
+def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method):
     global model, labeled_idx, unlabeled_idx, current_round, learning_curve
 
     ctx = dash.callback_context
@@ -455,8 +494,21 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
             }
 
     # ==========================================================
-    # VISUALIZATION 1: PCA EMBEDDING VIEW
+    # VISUALIZATION 1: EMBEDDING VIEW (PCA or UMAP)
     # ==========================================================
+
+    # Select embedding coordinates based on user choice
+    if embedding_method == 'umap' and UMAP_AVAILABLE and X_train_umap is not None:
+        embedding_coords = X_train_umap
+        embedding_type = 'UMAP'
+        coord_labels = {'x': 'UMAP 1', 'y': 'UMAP 2'}
+    else:
+        embedding_coords = X_train_pca
+        embedding_type = 'PCA'
+        coord_labels = {
+            'x': f'PC1 ({pca_model.explained_variance_ratio_[0]:.1%} var)',
+            'y': f'PC2 ({pca_model.explained_variance_ratio_[1]:.1%} var)'
+        }
 
     # Create status arrays for all training samples
     sample_status = np.array(['Unlabeled'] * len(X_train))
@@ -487,10 +539,10 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
         recent_batch = labeled_idx[-batch_size:]
         recently_queried[recent_batch] = True
 
-    # Create DataFrame for PCA plot
-    pca_df = pd.DataFrame({
-        'PC1': X_train_pca[:, 0],
-        'PC2': X_train_pca[:, 1],
+    # Create DataFrame for embedding plot
+    embedding_df = pd.DataFrame({
+        'Dim1': embedding_coords[:, 0],
+        'Dim2': embedding_coords[:, 1],
         'True_Label': ['Seizure' if y == 1 else 'Non-Seizure' for y in y_train],
         'Predicted_Label': ['Seizure' if p == 1 else 'Non-Seizure' for p in all_predictions],
         'Status': sample_status,
@@ -505,13 +557,13 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
         color_col = 'Status'
         color_discrete_map = {'Labeled': '#27ae60', 'Unlabeled': '#95a5a6'}
         title_suffix = "(Labeled vs Unlabeled)"
-        pca_fig = px.scatter(
-            pca_df, x='PC1', y='PC2',
+        embedding_fig = px.scatter(
+            embedding_df, x='Dim1', y='Dim2',
             color=color_col,
             color_discrete_map=color_discrete_map,
             hover_data={
-                'PC1': ':.3f',
-                'PC2': ':.3f',
+                'Dim1': ':.3f',
+                'Dim2': ':.3f',
                 'True_Label': True,
                 'Predicted_Label': True,
                 'Entropy': ':.4f',
@@ -519,9 +571,9 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
                 'Sample_ID': True,
                 'Queried': True
             },
-            title=f"PCA Embedding: {title_suffix}",
-            labels={'PC1': f'PC1 ({pca_model.explained_variance_ratio_[0]:.1%} var)',
-                   'PC2': f'PC2 ({pca_model.explained_variance_ratio_[1]:.1%} var)',
+            title=f"{embedding_type} Embedding: {title_suffix}",
+            labels={'Dim1': coord_labels['x'],
+                   'Dim2': coord_labels['y'],
                    'Entropy': 'Entropy H(p)'}
         )
 
@@ -529,13 +581,13 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
         color_col = 'True_Label'
         color_discrete_map = {'Seizure': '#e74c3c', 'Non-Seizure': '#3498db'}
         title_suffix = "(True Class)"
-        pca_fig = px.scatter(
-            pca_df, x='PC1', y='PC2',
+        embedding_fig = px.scatter(
+            embedding_df, x='Dim1', y='Dim2',
             color=color_col,
             color_discrete_map=color_discrete_map,
             hover_data={
-                'PC1': ':.3f',
-                'PC2': ':.3f',
+                'Dim1': ':.3f',
+                'Dim2': ':.3f',
                 'Status': True,
                 'Predicted_Label': True,
                 'Entropy': ':.4f',
@@ -543,21 +595,21 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
                 'Sample_ID': True,
                 'Queried': True
             },
-            title=f"PCA Embedding: {title_suffix}",
-            labels={'PC1': f'PC1 ({pca_model.explained_variance_ratio_[0]:.1%} var)',
-                   'PC2': f'PC2 ({pca_model.explained_variance_ratio_[1]:.1%} var)',
+            title=f"{embedding_type} Embedding: {title_suffix}",
+            labels={'Dim1': coord_labels['x'],
+                   'Dim2': coord_labels['y'],
                    'Entropy': 'Entropy H(p)'}
         )
 
     else:  # uncertainty mode
         title_suffix = "(Entropy-Based Uncertainty)"
-        pca_fig = px.scatter(
-            pca_df, x='PC1', y='PC2',
+        embedding_fig = px.scatter(
+            embedding_df, x='Dim1', y='Dim2',
             color='Entropy',
             color_continuous_scale='Reds',
             hover_data={
-                'PC1': ':.3f',
-                'PC2': ':.3f',
+                'Dim1': ':.3f',
+                'Dim2': ':.3f',
                 'True_Label': True,
                 'Predicted_Label': True,
                 'Status': True,
@@ -565,24 +617,24 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
                 'Sample_ID': True,
                 'Queried': True
             },
-            title=f"PCA Embedding: {title_suffix}",
-            labels={'PC1': f'PC1 ({pca_model.explained_variance_ratio_[0]:.1%} var)',
-                   'PC2': f'PC2 ({pca_model.explained_variance_ratio_[1]:.1%} var)',
+            title=f"{embedding_type} Embedding: {title_suffix}",
+            labels={'Dim1': coord_labels['x'],
+                   'Dim2': coord_labels['y'],
                    'Entropy': 'Entropy H(p)'}
         )
 
     # Add visual marker for recently queried samples (bold border)
-    pca_fig.update_traces(
+    embedding_fig.update_traces(
         marker=dict(
             opacity=0.7,
             line=dict(
-                width=pca_df['Queried'].apply(lambda x: 3 if x.startswith('Yes') else 0.5),
+                width=embedding_df['Queried'].apply(lambda x: 3 if x.startswith('Yes') else 0.5),
                 color='black'
             )
         )
     )
 
-    pca_fig.update_layout(
+    embedding_fig.update_layout(
         template='plotly_white',
         hovermode='closest',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -694,7 +746,7 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
         )
 
     # Status displays
-    round_display = f"Round {current_round + 1}/{max_rounds}"
+    round_display = f"Round {current_round}/{max_rounds}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
 
     if len(learning_curve) > 0:
@@ -706,8 +758,11 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
 
     test_acc_display = f"{current_test_acc:.4f}"
 
-    return (pca_fig, hist_fig, status_msg, status_style,
-            round_display, labeled_count, test_acc_display)
+    # Update embedding title
+    embedding_title = f"1. {embedding_type} Embedding View"
+
+    return (embedding_fig, hist_fig, status_msg, status_style,
+            round_display, labeled_count, test_acc_display, embedding_title)
 
 # ==========================================================
 # RUN APP
