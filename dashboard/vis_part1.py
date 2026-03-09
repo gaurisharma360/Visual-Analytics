@@ -592,39 +592,52 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
     # VISUALIZATION 2: UNCERTAINTY HISTOGRAM
     # ==========================================================
 
+    # Compute entropy for ALL training samples (labeled + unlabeled)
+    all_train_probs = model.predict_proba(X_train)
+    all_train_entropy = binary_entropy(all_train_probs)
+    all_train_confidence = np.max(all_train_probs, axis=1)
+
+    hist_fig = go.Figure()
+
+    # 1. Labeled samples (Oracle Annotated) - shown in green
+    if len(labeled_idx) > 0:
+        labeled_entropy = all_train_entropy[labeled_idx]
+        hist_fig.add_trace(go.Histogram(
+            x=labeled_entropy,
+            name='Labeled (Oracle Annotated)',
+            marker_color='#27ae60',
+            opacity=0.7,
+            nbinsx=30
+        ))
+
+    # 2. Unlabeled samples - split by confidence
     if len(unlabeled_idx) > 0:
-        unlabeled_probs = model.predict_proba(X_train[unlabeled_idx])
-        unlabeled_entropy = binary_entropy(unlabeled_probs)
-        unlabeled_confidence = np.max(unlabeled_probs, axis=1)
+        unlabeled_entropy = all_train_entropy[unlabeled_idx]
+        unlabeled_confidence = all_train_confidence[unlabeled_idx]
 
-        # Separate by confidence threshold (for active learning strategy)
-        below_threshold = unlabeled_confidence < confidence_threshold
-        above_threshold = ~below_threshold
-
-        hist_fig = go.Figure()
-
-        # Add histogram for samples above threshold (auto-classified)
+        # Confident unlabeled (auto-classified)
+        above_threshold = unlabeled_confidence >= confidence_threshold
         if np.sum(above_threshold) > 0:
             hist_fig.add_trace(go.Histogram(
                 x=unlabeled_entropy[above_threshold],
-                name='Auto-classified (confident)',
+                name='Unlabeled - Confident (Auto)',
                 marker_color='#3498db',
                 opacity=0.7,
                 nbinsx=30
             ))
 
-        # Add histogram for samples below threshold (will be queried)
+        # Uncertain unlabeled (will be queried from oracle)
+        below_threshold = unlabeled_confidence < confidence_threshold
         if np.sum(below_threshold) > 0:
             hist_fig.add_trace(go.Histogram(
                 x=unlabeled_entropy[below_threshold],
-                name='Oracle-queried (uncertain)',
+                name='Unlabeled - Uncertain (Needs Oracle)',
                 marker_color='#e74c3c',
                 opacity=0.7,
                 nbinsx=30
             ))
 
         # Add vertical line for entropy corresponding to confidence threshold
-        # When confidence = 0.7, what is the entropy?
         threshold_p = confidence_threshold
         threshold_entropy = binary_entropy(np.array([[1-threshold_p, threshold_p]]))[0]
 
@@ -633,46 +646,51 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
             line_dash="dash",
             line_color="black",
             line_width=2,
-            annotation_text=f"Entropy @ conf={confidence_threshold} ({threshold_entropy:.3f})",
+            annotation_text=f"Threshold @ conf={confidence_threshold} (H={threshold_entropy:.3f})",
             annotation_position="top"
         )
 
+        # Add annotation about counts
+        n_labeled = len(labeled_idx)
+        n_uncertain = np.sum(below_threshold)
+        n_confident = np.sum(above_threshold)
+        avg_unlabeled_entropy = unlabeled_entropy.mean()
+
+        hist_fig.add_annotation(
+            text=f"Labeled: {n_labeled} | Unlabeled-Confident: {n_confident} | Unlabeled-Uncertain: {n_uncertain} | Avg Unlabeled Entropy: {avg_unlabeled_entropy:.3f}",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.15,
+            showarrow=False,
+            font=dict(size=11, color='#34495e'),
+            xanchor='center'
+        )
+
         hist_fig.update_layout(
-            title=f"Entropy Distribution (n={len(unlabeled_idx)} unlabeled)",
+            title=f"Entropy Distribution (Total: {len(X_train)} samples)",
             xaxis_title="Binary Entropy H(p) = -p·log₂(p) - (1-p)·log₂(1-p)",
             yaxis_title="Count",
             barmode='stack',
             template='plotly_white',
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
+    else:
+        # All samples are labeled
+        hist_fig.update_layout(
+            title=f"Entropy Distribution (All {len(X_train)} samples labeled)",
+            xaxis_title="Binary Entropy H(p)",
+            yaxis_title="Count",
+            barmode='stack',
+            template='plotly_white',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
 
-        # Add annotation about counts
-        n_below = np.sum(below_threshold)
-        n_above = np.sum(above_threshold)
-        avg_entropy = unlabeled_entropy.mean()
         hist_fig.add_annotation(
-            text=f"Uncertain (conf<{confidence_threshold}): {n_below} | Confident: {n_above} | Avg Entropy: {avg_entropy:.3f}",
+            text=f"All {len(labeled_idx)} samples have been labeled by the oracle!",
             xref="paper", yref="paper",
             x=0.5, y=-0.15,
             showarrow=False,
-            font=dict(size=12, color='#34495e'),
+            font=dict(size=12, color='#27ae60'),
             xanchor='center'
-        )
-    else:
-        # No unlabeled samples left
-        hist_fig = go.Figure()
-        hist_fig.add_annotation(
-            text="No unlabeled samples remaining",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5,
-            showarrow=False,
-            font=dict(size=20, color='#95a5a6')
-        )
-        hist_fig.update_layout(
-            title="Entropy Distribution",
-            xaxis_title="Binary Entropy H(p)",
-            yaxis_title="Count",
-            template='plotly_white'
         )
 
     # Status displays
