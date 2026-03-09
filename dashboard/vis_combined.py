@@ -717,7 +717,7 @@ app.layout = html.Div([
                     ),
                 ], style={"display": "flex", "alignItems": "center", "gap": "6px", "flexWrap": "wrap", "paddingTop": "4px"}),
             ], style={
-                "width": "36%",
+                "width": "42%",
                 "height": "100%",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
@@ -731,7 +731,7 @@ app.layout = html.Div([
                 html.H3("Uncertainty Distribution", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "16px"}),
                 dcc.Graph(id="uncertainty-histogram", style={"height": "calc(100% - 30px)"}),
             ], style={
-                "width": "40%",
+                "width": "36%",
                 "height": "100%",
                 "marginLeft": "0.5%",
                 "backgroundColor": "#ffffff",
@@ -746,7 +746,7 @@ app.layout = html.Div([
                 html.H3("Confusion Matrix", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "16px"}),
                 dcc.Graph(id="confusion-heatmap", style={"height": "calc(100% - 30px)"}),
             ], style={
-                "width": "23%",
+                "width": "22%",
                 "height": "100%",
                 "marginLeft": "0.5%",
                 "backgroundColor": "#ffffff",
@@ -991,7 +991,7 @@ def update_dashboard(
         eeg_fig,
         annotate_disabled,
         train_disabled,
-        f"Confidence Threshold: {confidence_value:.2f}",
+        f"{confidence_value:.2f}",
         status_message,
         learning_curve_fig,
         heatmap_fig,
@@ -1002,7 +1002,7 @@ def update_dashboard(
         labeled_count,
         test_accuracy_display,
         f"{embedding_type} Embedding View",
-        f"Threshold Label (Confidence): {current_confidence_threshold:.2f}",
+        "",
     )
 
 
