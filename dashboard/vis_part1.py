@@ -58,6 +58,39 @@ def binary_entropy(probs):
     entropy = -p * np.log2(p + eps) - (1 - p) * np.log2(1 - p + eps)
     return np.clip(entropy, 0, 1)  # Ensure [0, 1] range
 
+def compute_batch(confidence_threshold):
+    """
+    Compute batch of samples to query using hybrid strategy (exactly matching vis_part2).
+    Uses global variables: model, X_train, unlabeled_idx, batch_size
+
+    Returns:
+        doctor_batch: samples that need oracle annotation
+        batch_auto_count: confident samples in top-K batch
+        pool_auto_count: confident samples outside batch
+    """
+    probs = model.predict_proba(X_train[unlabeled_idx])
+    max_probs = np.max(probs, axis=1)
+    uncertainty = 1 - max_probs
+
+    sorted_idx = np.argsort(uncertainty)[::-1]
+    top_k = sorted_idx[:batch_size]
+
+    batch_candidates = unlabeled_idx[top_k]
+    batch_conf = max_probs[top_k]
+
+    doctor_mask = batch_conf < confidence_threshold
+    doctor_batch = batch_candidates[doctor_mask]
+
+    batch_auto_count = len(batch_candidates) - len(doctor_batch)
+
+    confident_mask = max_probs >= confidence_threshold
+
+    batch_mask = np.zeros(len(unlabeled_idx), dtype=bool)
+    batch_mask[top_k] = True
+
+    pool_auto_count = np.sum(confident_mask & ~batch_mask)
+    return doctor_batch, batch_auto_count, pool_auto_count
+
 # ==========================================================
 # FEATURE ENGINEERING (from gauri_activelearningcore.py)
 # ==========================================================
@@ -95,7 +128,7 @@ def extract_features(X_raw, fs=173.61):
 # DATA LOADING AND SPLITTING
 # ==========================================================
 
-def load_and_split(binary=True):
+def load_and_split():
     """Load EEG data with subject-safe split"""
     df = pd.read_csv("../bonn_eeg_combined.csv")
 
@@ -103,24 +136,17 @@ def load_and_split(binary=True):
     y_original = df['Y'].values
 
     X = extract_features(X_raw)
+    y = (y_original == 'E').astype(int)
 
     # Reconstruct subjects
     subjects = []
     for set_idx in range(5):
         for i in range(100):
             subject_within_set = i // 20
-            if set_idx < 2:
-                subject_id = subject_within_set
-            else:
-                subject_id = subject_within_set + 5
+            subject_id = subject_within_set if set_idx < 2 else subject_within_set + 5
             subjects.append(subject_id)
 
     subjects = np.array(subjects)
-
-    if binary:
-        y = (y_original == 'E').astype(int)
-    else:
-        y = y_original
 
     gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     train_idx, test_idx = next(gss.split(X, y, groups=subjects))
@@ -158,8 +184,7 @@ def train_model(X_train, y_train, subjects_train):
         param_grid,
         cv=gkf.split(X_train, y_train, groups=subjects_train),
         scoring='accuracy',
-        n_jobs=-1,
-        verbose=0
+        n_jobs=-1
     )
 
     grid.fit(X_train, y_train)
@@ -170,7 +195,7 @@ def train_model(X_train, y_train, subjects_train):
 # ==========================================================
 
 print("Loading and splitting data...")
-X_raw_train, X_train, X_test, y_train, y_test, subjects_train = load_and_split(binary=True)
+X_raw_train, X_train, X_test, y_train, y_test, subjects_train = load_and_split()
 
 # Active Learning parameters
 initial_fraction = 0.2
@@ -194,6 +219,13 @@ current_round = 0
 model = None
 pca_model = None
 umap_model = None
+
+# Phase system (matching vis_part2)
+phase = "annotation"  # "annotation" or "training"
+current_batch = np.array([], dtype=int)  # Current batch to annotate
+current_pointer = 0  # Pointer within current batch
+batch_auto_count = 0  # Confident samples in batch
+pool_auto_count = 0  # Confident samples outside batch
 
 # History tracking
 learning_curve = []
@@ -241,7 +273,12 @@ test_pred = model.predict(X_test)
 test_acc = accuracy_score(y_test, test_pred)
 learning_curve.append((len(labeled_idx), test_acc))
 
+# Compute initial batch using hybrid strategy
+current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_threshold)
+current_pointer = 0
+
 print(f"Initial test accuracy: {test_acc:.4f}")
+print(f"Initial batch: {len(current_batch)} samples need oracle annotation")
 
 # ==========================================================
 # DASH APP INITIALIZATION
@@ -259,7 +296,7 @@ app.layout = html.Div([
     html.Div([
         html.Div([
             html.Label("Active Learning Round:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
-            html.Span(id='round-display', children=f"Round {current_round}/{max_rounds}",
+            html.Span(id='round-display', children=f"Round {current_round}",
                      style={'fontSize': '18px', 'color': '#2980b9', 'marginRight': '30px'}),
 
             html.Label("Labeled Samples:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
@@ -272,11 +309,22 @@ app.layout = html.Div([
         ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'marginBottom': '15px'}),
 
         html.Div([
-            html.Button('Next Round (Query Oracle)', id='next-round-btn', n_clicks=0,
+            html.Button('Annotate (Oracle)', id='annotate-btn', n_clicks=0,
                        style={
                            'padding': '10px 30px',
                            'fontSize': '16px',
                            'backgroundColor': '#3498db',
+                           'color': 'white',
+                           'border': 'none',
+                           'borderRadius': '5px',
+                           'cursor': 'pointer',
+                           'marginRight': '10px'
+                       }),
+            html.Button('Train Model', id='train-btn', n_clicks=0, disabled=True,
+                       style={
+                           'padding': '10px 30px',
+                           'fontSize': '16px',
+                           'backgroundColor': '#27ae60',
                            'color': 'white',
                            'border': 'none',
                            'borderRadius': '5px',
@@ -382,14 +430,18 @@ app.layout = html.Div([
      Output('round-display', 'children'),
      Output('labeled-count', 'children'),
      Output('test-accuracy', 'children'),
-     Output('embedding-title', 'children')],
-    [Input('next-round-btn', 'n_clicks'),
+     Output('embedding-title', 'children'),
+     Output('annotate-btn', 'disabled'),
+     Output('train-btn', 'disabled')],
+    [Input('annotate-btn', 'n_clicks'),
+     Input('train-btn', 'n_clicks'),
      Input('reset-btn', 'n_clicks'),
      Input('pca-view-mode', 'value'),
      Input('embedding-method', 'value')]
 )
-def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method):
+def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode, embedding_method):
     global model, labeled_idx, unlabeled_idx, current_round, learning_curve, oracle_annotated_idx, initial_labeled_idx
+    global phase, current_batch, current_pointer, batch_auto_count, pool_auto_count
 
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -409,6 +461,10 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         current_round = 0
         learning_curve = []
 
+        # Reset phase system
+        phase = "annotation"
+        current_pointer = 0
+
         # Retrain initial model
         model = train_model(
             X_train[labeled_idx],
@@ -420,86 +476,186 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         test_acc = accuracy_score(y_test, test_pred)
         learning_curve.append((len(labeled_idx), test_acc))
 
-        status_msg = "Reset to initial state!"
+        # Compute initial batch
+        current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_threshold)
+
+        status_msg = "Reset to initial state! Click 'Annotate' to label samples one by one."
         status_style = {
             'textAlign': 'center', 'padding': '10px',
             'backgroundColor': '#d5f4e6', 'borderRadius': '5px',
             'marginBottom': '20px', 'fontSize': '14px', 'color': '#27ae60'
         }
 
-    # Handle Next Round
-    elif trigger_id == 'next-round-btn' and next_clicks > 0 and len(unlabeled_idx) > 0 and current_round < max_rounds:
-        # Query uncertain samples
-        probs = model.predict_proba(X_train[unlabeled_idx])
-        max_probs = np.max(probs, axis=1)
+        # Enable annotate, disable train
+        annotate_disabled = False
+        train_disabled = True
 
-        # Find samples below threshold
-        low_conf_mask = max_probs < confidence_threshold
-        candidate_indices = unlabeled_idx[low_conf_mask]
-        candidate_conf = max_probs[low_conf_mask]
-
-        if len(candidate_indices) == 0:
-            status_msg = "⚠️ Model is confident on all remaining samples. Active learning complete!"
+    # =====================================================
+    # ANNOTATION PHASE: Annotate one sample at a time
+    # =====================================================
+    elif trigger_id == 'annotate-btn' and annotate_clicks > 0 and phase == "annotation":
+        if len(current_batch) == 0:
+            # No samples to annotate
+            status_msg = "🎯 No uncertain samples to annotate. Click 'Train Model' if available, or active learning is complete!"
             status_style = {
                 'textAlign': 'center', 'padding': '10px',
                 'backgroundColor': '#fff3cd', 'borderRadius': '5px',
                 'marginBottom': '20px', 'fontSize': '14px', 'color': '#856404'
             }
-        else:
-            # Select batch
-            if len(candidate_indices) > batch_size:
-                sorted_idx = np.argsort(candidate_conf)
-                selected = sorted_idx[:batch_size]
-                queried = candidate_indices[selected]
+            annotate_disabled = True
+            train_disabled = True
+        elif current_pointer < len(current_batch):
+            # Annotate current sample
+            sample_id = current_batch[current_pointer]
+            labeled_idx = np.append(labeled_idx, sample_id)
+            unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
+            oracle_annotated_idx = np.append(oracle_annotated_idx, sample_id)
+            current_pointer += 1
+
+            if current_pointer >= len(current_batch):
+                # Finished annotating all samples in batch
+                phase = "training"
+                status_msg = f"✓ Annotated {len(current_batch)} samples! Now click 'Train Model' to retrain."
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d1ecf1', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#0c5460'
+                }
+                annotate_disabled = True
+                train_disabled = False
             else:
-                queried = candidate_indices
-
-            # Update pools
-            labeled_idx = np.concatenate([labeled_idx, queried])
-            unlabeled_idx = np.setdiff1d(unlabeled_idx, queried)
-            oracle_annotated_idx = np.concatenate([oracle_annotated_idx, queried])  # Track oracle annotations
-            current_round += 1
-
-            # Retrain model
-            model = train_model(
-                X_train[labeled_idx],
-                y_train[labeled_idx],
-                subjects_train[labeled_idx]
-            )
-
-            # Evaluate
-            test_pred = model.predict(X_test)
-            test_acc = accuracy_score(y_test, test_pred)
-            learning_curve.append((len(labeled_idx), test_acc))
-
-            status_msg = f"✓ Round {current_round} complete! Queried {len(queried)} samples from oracle. Test Acc: {test_acc:.4f}"
+                # More samples to annotate
+                remaining = len(current_batch) - current_pointer
+                status_msg = f"Sample {current_pointer}/{len(current_batch)} annotated. {remaining} samples remaining. Click 'Annotate' again."
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d1ecf1', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#0c5460'
+                }
+                annotate_disabled = False
+                train_disabled = True
+        else:
+            # Already finished batch
+            status_msg = "Batch complete! Click 'Train Model' to continue."
             status_style = {
                 'textAlign': 'center', 'padding': '10px',
-                'backgroundColor': '#d1ecf1', 'borderRadius': '5px',
-                'marginBottom': '20px', 'fontSize': '14px', 'color': '#0c5460'
+                'backgroundColor': '#fff3cd', 'borderRadius': '5px',
+                'marginBottom': '20px', 'fontSize': '14px', 'color': '#856404'
             }
-    else:
-        if current_round >= max_rounds:
-            status_msg = "🎯 Maximum rounds reached!"
-            status_style = {
-                'textAlign': 'center', 'padding': '10px',
-                'backgroundColor': '#f8d7da', 'borderRadius': '5px',
-                'marginBottom': '20px', 'fontSize': '14px', 'color': '#721c24'
-            }
-        elif len(unlabeled_idx) == 0:
-            status_msg = "🎉 All samples labeled!"
+            annotate_disabled = True
+            train_disabled = False
+
+    # =====================================================
+    # TRAINING PHASE: Retrain model and compute next batch
+    # =====================================================
+    elif trigger_id == 'train-btn' and train_clicks > 0 and phase == "training":
+        current_round += 1
+
+        # Retrain model
+        model = train_model(
+            X_train[labeled_idx],
+            y_train[labeled_idx],
+            subjects_train[labeled_idx]
+        )
+
+        # Evaluate
+        test_pred = model.predict(X_test)
+        test_acc = accuracy_score(y_test, test_pred)
+        learning_curve.append((len(labeled_idx), test_acc))
+
+        # Compute next batch
+        current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_threshold)
+        current_pointer = 0
+
+        if len(current_batch) == 0:
+            # Active learning complete
+            phase = "complete"
+            status_msg = f"🎉 Active Learning Complete! Round {current_round} finished. Test Acc: {test_acc:.4f}. All remaining samples are confident."
             status_style = {
                 'textAlign': 'center', 'padding': '10px',
                 'backgroundColor': '#d4edda', 'borderRadius': '5px',
                 'marginBottom': '20px', 'fontSize': '14px', 'color': '#155724'
             }
+            annotate_disabled = True
+            train_disabled = True
         else:
-            status_msg = "Ready for next round..."
+            # Continue to next annotation round
+            phase = "annotation"
+            status_msg = f"✓ Round {current_round} complete! Test Acc: {test_acc:.4f}. New batch: {len(current_batch)} samples to annotate. Click 'Annotate'."
             status_style = {
                 'textAlign': 'center', 'padding': '10px',
-                'backgroundColor': '#d5f4e6', 'borderRadius': '5px',
-                'marginBottom': '20px', 'fontSize': '14px', 'color': '#27ae60'
+                'backgroundColor': '#d1ecf1', 'borderRadius': '5px',
+                'marginBottom': '20px', 'fontSize': '14px', 'color': '#0c5460'
             }
+            annotate_disabled = False
+            train_disabled = True
+
+    # =====================================================
+    # DEFAULT STATE (no action or view mode change)
+    # =====================================================
+    # =====================================================
+    # DEFAULT STATE (no action or view mode change)
+    # =====================================================
+    else:
+        # Set button states based on current phase
+        if phase == "annotation":
+            if len(current_batch) > 0 and current_pointer < len(current_batch):
+                remaining = len(current_batch) - current_pointer
+                status_msg = f"Ready to annotate. {remaining} samples in current batch. Click 'Annotate'."
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d5f4e6', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#27ae60'
+                }
+                annotate_disabled = False
+                train_disabled = True
+            else:
+                status_msg = "Ready to start. Click 'Annotate' to begin."
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d5f4e6', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#27ae60'
+                }
+                annotate_disabled = False
+                train_disabled = True
+        elif phase == "training":
+            status_msg = "Batch complete! Click 'Train Model' to continue."
+            status_style = {
+                'textAlign': 'center', 'padding': '10px',
+                'backgroundColor': '#fff3cd', 'borderRadius': '5px',
+                'marginBottom': '20px', 'fontSize': '14px', 'color': '#856404'
+            }
+            annotate_disabled = True
+            train_disabled = False
+        elif phase == "complete":
+            status_msg = "🎉 Active Learning Complete!"
+            status_style = {
+                'textAlign': 'center', 'padding': '10px',
+                'backgroundColor': '#d4edda', 'borderRadius': '5px',
+                'marginBottom': '20px', 'fontSize': '14px', 'color': '#155724'
+            }
+            annotate_disabled = True
+            train_disabled = True
+        else:
+            # Initial state
+            if len(unlabeled_idx) == 0:
+                status_msg = "🎉 All samples labeled!"
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d4edda', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#155724'
+                }
+                annotate_disabled = True
+                train_disabled = True
+            else:
+                status_msg = "Ready to start active learning. Click 'Annotate' to begin."
+                status_style = {
+                    'textAlign': 'center', 'padding': '10px',
+                    'backgroundColor': '#d5f4e6', 'borderRadius': '5px',
+                    'marginBottom': '20px', 'fontSize': '14px', 'color': '#27ae60'
+                }
+                annotate_disabled = False
+                train_disabled = True
 
     # ==========================================================
     # VISUALIZATION 1: EMBEDDING VIEW (PCA or UMAP)
@@ -769,7 +925,7 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         )
 
     # Status displays
-    round_display = f"Round {current_round}/{max_rounds}"
+    round_display = f"Round {current_round}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
 
     if len(learning_curve) > 0:
@@ -785,7 +941,8 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
     embedding_title = f"1. {embedding_type} Embedding View"
 
     return (embedding_fig, hist_fig, status_msg, status_style,
-            round_display, labeled_count, test_acc_display, embedding_title)
+            round_display, labeled_count, test_acc_display, embedding_title,
+            annotate_disabled, train_disabled)
 
 # ==========================================================
 # RUN APP
