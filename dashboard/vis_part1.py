@@ -185,6 +185,10 @@ indices = np.random.permutation(len(X_train))
 labeled_idx = indices[:n_initial].copy()
 unlabeled_idx = indices[n_initial:].copy()
 
+# Track initial vs oracle-annotated samples
+initial_labeled_idx = labeled_idx.copy()  # Store initial labeled samples
+oracle_annotated_idx = np.array([], dtype=int)  # Track oracle annotations
+
 # Training state
 current_round = 0
 model = None
@@ -385,7 +389,7 @@ app.layout = html.Div([
      Input('embedding-method', 'value')]
 )
 def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method):
-    global model, labeled_idx, unlabeled_idx, current_round, learning_curve
+    global model, labeled_idx, unlabeled_idx, current_round, learning_curve, oracle_annotated_idx, initial_labeled_idx
 
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -396,9 +400,12 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
     # Handle Reset
     if trigger_id == 'reset-btn' and reset_clicks > 0:
         # Reset to initial state
+        n_initial = int(initial_fraction * len(X_train))
         indices = np.random.permutation(len(X_train))
         labeled_idx = indices[:n_initial].copy()
         unlabeled_idx = indices[n_initial:].copy()
+        initial_labeled_idx = labeled_idx.copy()
+        oracle_annotated_idx = np.array([], dtype=int)
         current_round = 0
         learning_curve = []
 
@@ -450,6 +457,7 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
             # Update pools
             labeled_idx = np.concatenate([labeled_idx, queried])
             unlabeled_idx = np.setdiff1d(unlabeled_idx, queried)
+            oracle_annotated_idx = np.concatenate([oracle_annotated_idx, queried])  # Track oracle annotations
             current_round += 1
 
             # Retrain model
@@ -651,18 +659,29 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
 
     hist_fig = go.Figure()
 
-    # 1. Labeled samples (Oracle Annotated) - shown in green
-    if len(labeled_idx) > 0:
-        labeled_entropy = all_train_entropy[labeled_idx]
+    # 1. Initial labeled samples (randomly selected at start) - shown in light green
+    if len(initial_labeled_idx) > 0:
+        initial_entropy = all_train_entropy[initial_labeled_idx]
         hist_fig.add_trace(go.Histogram(
-            x=labeled_entropy,
-            name='Labeled (Oracle Annotated)',
-            marker_color='#27ae60',
+            x=initial_entropy,
+            name='Initial Labeled (Random)',
+            marker_color='#52c41a',  # Light green
             opacity=0.7,
             nbinsx=30
         ))
 
-    # 2. Unlabeled samples - split by confidence
+    # 2. Oracle-annotated samples (queried during active learning) - shown in darker green
+    if len(oracle_annotated_idx) > 0:
+        oracle_entropy = all_train_entropy[oracle_annotated_idx]
+        hist_fig.add_trace(go.Histogram(
+            x=oracle_entropy,
+            name='Oracle Annotated',
+            marker_color='#237804',  # Dark green
+            opacity=0.7,
+            nbinsx=30
+        ))
+
+    # 3. Unlabeled samples - split by confidence
     if len(unlabeled_idx) > 0:
         unlabeled_entropy = all_train_entropy[unlabeled_idx]
         unlabeled_confidence = all_train_confidence[unlabeled_idx]
@@ -703,17 +722,18 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         )
 
         # Add annotation about counts
-        n_labeled = len(labeled_idx)
+        n_initial = len(initial_labeled_idx)
+        n_oracle = len(oracle_annotated_idx)
         n_uncertain = np.sum(below_threshold)
         n_confident = np.sum(above_threshold)
         avg_unlabeled_entropy = unlabeled_entropy.mean()
 
         hist_fig.add_annotation(
-            text=f"Labeled: {n_labeled} | Unlabeled-Confident: {n_confident} | Unlabeled-Uncertain: {n_uncertain} | Avg Unlabeled Entropy: {avg_unlabeled_entropy:.3f}",
+            text=f"Initial: {n_initial} | Oracle: {n_oracle} | Unlabeled-Confident: {n_confident} | Unlabeled-Uncertain: {n_uncertain} | Avg Unlabeled H: {avg_unlabeled_entropy:.3f}",
             xref="paper", yref="paper",
             x=0.5, y=-0.15,
             showarrow=False,
-            font=dict(size=11, color='#34495e'),
+            font=dict(size=10, color='#34495e'),
             xanchor='center'
         )
 
@@ -727,6 +747,9 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         )
     else:
         # All samples are labeled
+        n_initial = len(initial_labeled_idx)
+        n_oracle = len(oracle_annotated_idx)
+
         hist_fig.update_layout(
             title=f"Entropy Distribution (All {len(X_train)} samples labeled)",
             xaxis_title="Binary Entropy H(p)",
@@ -737,7 +760,7 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode, embedding_method)
         )
 
         hist_fig.add_annotation(
-            text=f"All {len(labeled_idx)} samples have been labeled by the oracle!",
+            text=f"All samples labeled! Initial: {n_initial} | Oracle Annotated: {n_oracle}",
             xref="paper", yref="paper",
             x=0.5, y=-0.15,
             showarrow=False,
