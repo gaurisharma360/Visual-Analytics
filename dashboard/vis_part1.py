@@ -698,6 +698,9 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         all_predictions[labeled_idx] = model.predict(X_train[labeled_idx])
         all_probs_class1[labeled_idx] = labeled_probs[:, 1]
 
+    # Compute Prob_Non-Seizure (class 0) for tooltip display
+    all_probs_class0 = 1 - all_probs_class1
+
     # Identify samples queried from oracle (for visual marking with bold border)
     recently_queried = np.zeros(len(X_train), dtype=bool)
     if len(oracle_annotated_idx) > 0:
@@ -711,8 +714,9 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         'True_Label': ['Seizure' if y == 1 else 'Non-Seizure' for y in y_train],
         'Predicted_Label': ['Seizure' if p == 1 else 'Non-Seizure' for p in all_predictions],
         'Status': sample_status,
-        'Uncertainty': all_uncertainties,  # Changed from 'Entropy'
+        'Uncertainty': all_uncertainties,
         'Prob_Seizure': all_probs_class1,
+        'Prob_Non_Seizure': all_probs_class0,
         'Sample_ID': np.arange(len(X_train)),
         'Queried': ['Yes (Oracle Annotated)' if q else 'No' for q in recently_queried]
     })
@@ -732,6 +736,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
                 'True_Label': True,
                 'Predicted_Label': True,
                 'Uncertainty': ':.4f',
+                'Prob_Non_Seizure': ':.4f',
                 'Prob_Seizure': ':.4f',
                 'Sample_ID': True,
                 'Queried': True
@@ -756,6 +761,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
                 'Status': True,
                 'Predicted_Label': True,
                 'Uncertainty': ':.4f',
+                'Prob_Non_Seizure': ':.4f',
                 'Prob_Seizure': ':.4f',
                 'Sample_ID': True,
                 'Queried': True
@@ -778,6 +784,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
                 'True_Label': True,
                 'Predicted_Label': True,
                 'Status': True,
+                'Prob_Non_Seizure': ':.4f',
                 'Prob_Seizure': ':.4f',
                 'Sample_ID': True,
                 'Queried': True
