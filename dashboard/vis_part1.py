@@ -678,30 +678,31 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
     sample_status = np.array(['Unlabeled'] * len(X_train))
     sample_status[labeled_idx] = 'Labeled'
 
-    # Compute entropy-based uncertainties for all samples
+    # Compute uncertainty for all samples (using same formula as active learning)
     all_uncertainties = np.zeros(len(X_train))
     all_predictions = np.zeros(len(X_train))  # Store predicted class
     all_probs_class1 = np.zeros(len(X_train))  # Store P(seizure)
 
     if len(unlabeled_idx) > 0:
         unlabeled_probs = model.predict_proba(X_train[unlabeled_idx])
-        all_uncertainties[unlabeled_idx] = binary_entropy(unlabeled_probs)
+        # Use same uncertainty as active learning: 1 - max_probs
+        all_uncertainties[unlabeled_idx] = 1 - np.max(unlabeled_probs, axis=1)
         all_predictions[unlabeled_idx] = model.predict(X_train[unlabeled_idx])
         all_probs_class1[unlabeled_idx] = unlabeled_probs[:, 1]
 
     # Compute uncertainties for labeled samples too (for visualization)
     if len(labeled_idx) > 0:
         labeled_probs = model.predict_proba(X_train[labeled_idx])
-        all_uncertainties[labeled_idx] = binary_entropy(labeled_probs)
+        # Use same uncertainty as active learning: 1 - max_probs
+        all_uncertainties[labeled_idx] = 1 - np.max(labeled_probs, axis=1)
         all_predictions[labeled_idx] = model.predict(X_train[labeled_idx])
         all_probs_class1[labeled_idx] = labeled_probs[:, 1]
 
-    # Identify samples queried in the most recent round (for visual marking)
+    # Identify samples queried from oracle (for visual marking with bold border)
     recently_queried = np.zeros(len(X_train), dtype=bool)
-    if current_round > 0 and len(labeled_idx) >= batch_size:
-        # Mark the last batch of labeled samples as recently queried
-        recent_batch = labeled_idx[-batch_size:]
-        recently_queried[recent_batch] = True
+    if len(oracle_annotated_idx) > 0:
+        # Mark all oracle-annotated samples
+        recently_queried[oracle_annotated_idx] = True
 
     # Create DataFrame for embedding plot
     embedding_df = pd.DataFrame({
@@ -710,7 +711,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         'True_Label': ['Seizure' if y == 1 else 'Non-Seizure' for y in y_train],
         'Predicted_Label': ['Seizure' if p == 1 else 'Non-Seizure' for p in all_predictions],
         'Status': sample_status,
-        'Entropy': all_uncertainties,
+        'Uncertainty': all_uncertainties,  # Changed from 'Entropy'
         'Prob_Seizure': all_probs_class1,
         'Sample_ID': np.arange(len(X_train)),
         'Queried': ['Yes (Oracle Annotated)' if q else 'No' for q in recently_queried]
@@ -730,7 +731,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
                 'Dim2': ':.3f',
                 'True_Label': True,
                 'Predicted_Label': True,
-                'Entropy': ':.4f',
+                'Uncertainty': ':.4f',
                 'Prob_Seizure': ':.4f',
                 'Sample_ID': True,
                 'Queried': True
@@ -738,7 +739,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
             title=f"{embedding_type} Embedding: {title_suffix}",
             labels={'Dim1': coord_labels['x'],
                    'Dim2': coord_labels['y'],
-                   'Entropy': 'Entropy H(p)'}
+                   'Uncertainty': 'Uncertainty (1-max_conf)'}
         )
 
     elif pca_view_mode == 'true_class':
@@ -754,7 +755,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
                 'Dim2': ':.3f',
                 'Status': True,
                 'Predicted_Label': True,
-                'Entropy': ':.4f',
+                'Uncertainty': ':.4f',
                 'Prob_Seizure': ':.4f',
                 'Sample_ID': True,
                 'Queried': True
@@ -762,14 +763,14 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
             title=f"{embedding_type} Embedding: {title_suffix}",
             labels={'Dim1': coord_labels['x'],
                    'Dim2': coord_labels['y'],
-                   'Entropy': 'Entropy H(p)'}
+                   'Uncertainty': 'Uncertainty (1-max_conf)'}
         )
 
     else:  # uncertainty mode
-        title_suffix = "(Entropy-Based Uncertainty)"
+        title_suffix = "(Uncertainty-Based)"
         embedding_fig = px.scatter(
             embedding_df, x='Dim1', y='Dim2',
-            color='Entropy',
+            color='Uncertainty',
             color_continuous_scale='Reds',
             hover_data={
                 'Dim1': ':.3f',
@@ -784,7 +785,7 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
             title=f"{embedding_type} Embedding: {title_suffix}",
             labels={'Dim1': coord_labels['x'],
                    'Dim2': coord_labels['y'],
-                   'Entropy': 'Entropy H(p)'}
+                   'Uncertainty': 'Uncertainty (1-max_conf)'}
         )
 
     # Add visual marker for recently queried samples (bold border)
@@ -808,18 +809,19 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
     # VISUALIZATION 2: UNCERTAINTY HISTOGRAM
     # ==========================================================
 
-    # Compute entropy for ALL training samples (labeled + unlabeled)
+    # Compute uncertainty for ALL training samples (labeled + unlabeled)
+    # Using same formula as active learning: uncertainty = 1 - max_probs
     all_train_probs = model.predict_proba(X_train)
-    all_train_entropy = binary_entropy(all_train_probs)
+    all_train_uncertainty = 1 - np.max(all_train_probs, axis=1)
     all_train_confidence = np.max(all_train_probs, axis=1)
 
     hist_fig = go.Figure()
 
     # 1. Initial labeled samples (randomly selected at start) - shown in light green
     if len(initial_labeled_idx) > 0:
-        initial_entropy = all_train_entropy[initial_labeled_idx]
+        initial_uncertainty = all_train_uncertainty[initial_labeled_idx]
         hist_fig.add_trace(go.Histogram(
-            x=initial_entropy,
+            x=initial_uncertainty,
             name='Initial Labeled (Random)',
             marker_color='#52c41a',  # Light green
             opacity=0.7,
@@ -828,9 +830,9 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
 
     # 2. Oracle-annotated samples (queried during active learning) - shown in darker green
     if len(oracle_annotated_idx) > 0:
-        oracle_entropy = all_train_entropy[oracle_annotated_idx]
+        oracle_uncertainty = all_train_uncertainty[oracle_annotated_idx]
         hist_fig.add_trace(go.Histogram(
-            x=oracle_entropy,
+            x=oracle_uncertainty,
             name='Oracle Annotated',
             marker_color='#237804',  # Dark green
             opacity=0.7,
@@ -839,14 +841,14 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
 
     # 3. Unlabeled samples - split by confidence
     if len(unlabeled_idx) > 0:
-        unlabeled_entropy = all_train_entropy[unlabeled_idx]
+        unlabeled_uncertainty = all_train_uncertainty[unlabeled_idx]
         unlabeled_confidence = all_train_confidence[unlabeled_idx]
 
         # Confident unlabeled (auto-classified)
         above_threshold = unlabeled_confidence >= confidence_threshold
         if np.sum(above_threshold) > 0:
             hist_fig.add_trace(go.Histogram(
-                x=unlabeled_entropy[above_threshold],
+                x=unlabeled_uncertainty[above_threshold],
                 name='Unlabeled - Confident (Auto)',
                 marker_color='#3498db',
                 opacity=0.7,
@@ -857,23 +859,23 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         below_threshold = unlabeled_confidence < confidence_threshold
         if np.sum(below_threshold) > 0:
             hist_fig.add_trace(go.Histogram(
-                x=unlabeled_entropy[below_threshold],
+                x=unlabeled_uncertainty[below_threshold],
                 name='Unlabeled - Uncertain (Needs Oracle)',
                 marker_color='#e74c3c',
                 opacity=0.7,
                 nbinsx=30
             ))
 
-        # Add vertical line for entropy corresponding to confidence threshold
-        threshold_p = confidence_threshold
-        threshold_entropy = binary_entropy(np.array([[1-threshold_p, threshold_p]]))[0]
+        # Add vertical line for uncertainty corresponding to confidence threshold
+        # When confidence = 0.7, uncertainty = 0.3
+        threshold_uncertainty = 1 - confidence_threshold
 
         hist_fig.add_vline(
-            x=threshold_entropy,
+            x=threshold_uncertainty,
             line_dash="dash",
             line_color="black",
             line_width=2,
-            annotation_text=f"Threshold @ conf={confidence_threshold} (H={threshold_entropy:.3f})",
+            annotation_text=f"Threshold @ conf={confidence_threshold} (uncertainty={threshold_uncertainty:.2f})",
             annotation_position="top"
         )
 
@@ -882,10 +884,10 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         n_oracle = len(oracle_annotated_idx)
         n_uncertain = np.sum(below_threshold)
         n_confident = np.sum(above_threshold)
-        avg_unlabeled_entropy = unlabeled_entropy.mean()
+        avg_unlabeled_uncertainty = unlabeled_uncertainty.mean()
 
         hist_fig.add_annotation(
-            text=f"Initial: {n_initial} | Oracle: {n_oracle} | Unlabeled-Confident: {n_confident} | Unlabeled-Uncertain: {n_uncertain} | Avg Unlabeled H: {avg_unlabeled_entropy:.3f}",
+            text=f"Initial: {n_initial} | Oracle: {n_oracle} | Unlabeled-Confident: {n_confident} | Unlabeled-Uncertain: {n_uncertain} | Avg Unlabeled Uncertainty: {avg_unlabeled_uncertainty:.3f}",
             xref="paper", yref="paper",
             x=0.5, y=-0.15,
             showarrow=False,
@@ -894,8 +896,8 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         )
 
         hist_fig.update_layout(
-            title=f"Entropy Distribution (Total: {len(X_train)} samples)",
-            xaxis_title="Binary Entropy H(p) = -p·log₂(p) - (1-p)·log₂(1-p)",
+            title=f"Uncertainty Distribution (Total: {len(X_train)} samples)",
+            xaxis_title="Uncertainty (1 - max_confidence) - Same as Active Learning",
             yaxis_title="Count",
             barmode='stack',
             template='plotly_white',
@@ -907,8 +909,8 @@ def update_dashboard(annotate_clicks, train_clicks, reset_clicks, pca_view_mode,
         n_oracle = len(oracle_annotated_idx)
 
         hist_fig.update_layout(
-            title=f"Entropy Distribution (All {len(X_train)} samples labeled)",
-            xaxis_title="Binary Entropy H(p)",
+            title=f"Uncertainty Distribution (All {len(X_train)} samples labeled)",
+            xaxis_title="Uncertainty (1 - max_confidence)",
             yaxis_title="Count",
             barmode='stack',
             template='plotly_white',
@@ -954,9 +956,11 @@ if __name__ == '__main__':
     print("="*70)
     print("Open your browser at: http://127.0.0.1:8050")
     print("Features:")
-    print("  1. PCA Embedding View - Visualize sample distribution in 2D")
+    print("  1. PCA/UMAP Embedding View - Visualize sample distribution in 2D")
     print("  2. Uncertainty Histogram - See model confidence distribution")
-    print("\nClick 'Next Round' to perform active learning iterations")
+    print("\nWorkflow:")
+    print("  - Click 'Annotate (Oracle)' to label samples one-by-one")
+    print("  - Click 'Train Model' after batch is complete to retrain")
     print("="*70 + "\n")
 
     app.run(debug=True, port=8050)
