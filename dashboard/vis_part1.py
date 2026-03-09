@@ -509,8 +509,6 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
             pca_df, x='PC1', y='PC2',
             color=color_col,
             color_discrete_map=color_discrete_map,
-            size='Entropy',  # Size proportional to uncertainty
-            size_max=15,
             hover_data={
                 'PC1': ':.3f',
                 'PC2': ':.3f',
@@ -535,8 +533,6 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
             pca_df, x='PC1', y='PC2',
             color=color_col,
             color_discrete_map=color_discrete_map,
-            size='Entropy',  # Size proportional to uncertainty
-            size_max=15,
             hover_data={
                 'PC1': ':.3f',
                 'PC2': ':.3f',
@@ -559,8 +555,6 @@ def update_dashboard(next_clicks, reset_clicks, pca_view_mode):
             pca_df, x='PC1', y='PC2',
             color='Entropy',
             color_continuous_scale='Reds',
-            size='Entropy',  # Size proportional to uncertainty
-            size_max=15,
             hover_data={
                 'PC1': ':.3f',
                 'PC2': ':.3f',
