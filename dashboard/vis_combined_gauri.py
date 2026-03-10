@@ -323,6 +323,8 @@ test_history = []
 round_history = []
 sensitivity_history = []
 specificity_history = []
+annotation_queue = []
+selected_sample_id = None
 
 
 def initialize_active_learning():
@@ -334,6 +336,7 @@ def initialize_active_learning():
     global sensitivity_history, specificity_history
     global initial_labeled_idx, oracle_annotated_idx
     global current_confidence_threshold
+    global annotation_queue, selected_sample_id
 
     train_history = []
     test_history = []
@@ -362,7 +365,9 @@ def initialize_active_learning():
     )
 
     current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
+    annotation_queue = list(current_batch[:batch_size])
     current_pointer = 0
+    selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else None
 
 
 def build_learning_curve():
@@ -440,6 +445,41 @@ def build_data_donut():
     return fig
 
 
+def _build_embedding_boundary_trace(embedding_coords):
+    """Build a 0.5-probability boundary in embedding space for visual interpretation."""
+    if embedding_coords is None or len(embedding_coords) < 2:
+        return None
+
+    if len(np.unique(y_train)) < 2:
+        return None
+
+    x_min, x_max = np.min(embedding_coords[:, 0]), np.max(embedding_coords[:, 0])
+    y_min, y_max = np.min(embedding_coords[:, 1]), np.max(embedding_coords[:, 1])
+    x_pad = 0.05 * (x_max - x_min if x_max > x_min else 1.0)
+    y_pad = 0.05 * (y_max - y_min if y_max > y_min else 1.0)
+
+    xx, yy = np.meshgrid(
+        np.linspace(x_min - x_pad, x_max + x_pad, 120),
+        np.linspace(y_min - y_pad, y_max + y_pad, 120),
+    )
+
+    boundary_model = LogisticRegression(solver="lbfgs", max_iter=1000, random_state=42)
+    boundary_model.fit(embedding_coords, y_train)
+    zz = boundary_model.predict_proba(np.c_[xx.ravel(), yy.ravel()])[:, 1].reshape(xx.shape)
+
+    return go.Contour(
+        x=xx[0],
+        y=yy[:, 0],
+        z=zz,
+        showscale=False,
+        contours=dict(start=0.5, end=0.5, size=1, coloring="none", showlines=True),
+        line=dict(color="black", width=2, dash="dash"),
+        name="Decision Boundary",
+        hoverinfo="skip",
+        showlegend=True,
+    )
+
+
 def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold):
     if embedding_method == "umap" and UMAP_AVAILABLE and X_train_umap_dgrid is not None:
         embedding_coords = X_train_umap_dgrid
@@ -499,6 +539,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
             x="Dim1",
             y="Dim2",
             color="Status",
+            custom_data=["Sample_ID"],
             color_discrete_map={"Labeled": "#27ae60", "Unlabeled": "#95a5a6"},
             hover_data={
                 "Dim1": ":.3f",
@@ -521,6 +562,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
             x="Dim1",
             y="Dim2",
             color="True_Label",
+            custom_data=["Sample_ID"],
             color_discrete_map={"Seizure": "#e74c3c", "Non-Seizure": "#3498db"},
             hover_data={
                 "Dim1": ":.3f",
@@ -543,6 +585,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
             x="Dim1",
             y="Dim2",
             color="Uncertainty",
+            custom_data=["Sample_ID"],
             color_continuous_scale="Reds",
             hover_data={
                 "Dim1": ":.3f",
@@ -561,8 +604,53 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
         )
 
     border_width = [3 if q.startswith("Yes") else 0.5 for q in embedding_df["Queried"]]
-    embedding_fig.update_traces(marker=dict(opacity=0.7, line=dict(width=border_width, color="black")))
-    embedding_fig.update_layout(template="plotly_white", hovermode="closest")
+    embedding_fig.update_traces(
+        marker=dict(opacity=0.7, line=dict(width=border_width, color="black")),
+        selector=dict(type="scatter"),
+    )
+
+    if selected_sample_id is not None:
+        selected_mask = embedding_df["Sample_ID"] == selected_sample_id
+        if selected_mask.any():
+            embedding_fig.add_trace(
+                go.Scatter(
+                    x=embedding_df[selected_mask]["Dim1"],
+                    y=embedding_df[selected_mask]["Dim2"],
+                    mode="markers",
+                    marker=dict(size=16, color="#fde047", line=dict(width=3, color="black")),
+                    name="Selected EEG",
+                    hoverinfo="skip",
+                    showlegend=True,
+                )
+            )
+
+    boundary_trace = _build_embedding_boundary_trace(embedding_coords)
+    if boundary_trace is not None:
+        embedding_fig.add_trace(boundary_trace)
+        embedding_fig.data = (embedding_fig.data[-1],) + embedding_fig.data[:-1]
+
+    x_min = float(embedding_df["Dim1"].min())
+    x_max = float(embedding_df["Dim1"].max())
+    y_min = float(embedding_df["Dim2"].min())
+    y_max = float(embedding_df["Dim2"].max())
+    x_pad = 0.03 * (x_max - x_min if x_max > x_min else 1.0)
+    y_pad = 0.03 * (y_max - y_min if y_max > y_min else 1.0)
+
+    embedding_fig.update_xaxes(range=[x_min - x_pad, x_max + x_pad], automargin=False)
+    embedding_fig.update_yaxes(range=[y_min - y_pad, y_max + y_pad], automargin=False)
+    embedding_fig.update_layout(
+        template="plotly_white",
+        hovermode="closest",
+        margin=dict(t=10, b=28, l=36, r=10),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.01,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(255,255,255,0.7)",
+        ),
+    )
     return embedding_fig, embedding_type
 
 
@@ -699,6 +787,34 @@ app.layout = html.Div([
                 style={
                     "marginLeft": "8px",
                     "backgroundColor": "#475569",
+                    "color": "white",
+                    "border": "none",
+                    "borderRadius": "8px",
+                    "padding": "8px 12px",
+                    "fontWeight": "600",
+                    "cursor": "pointer",
+                },
+            ),
+            html.Button(
+                "Load Top-K Uncertain",
+                id="load-uncertain-btn",
+                style={
+                    "marginLeft": "8px",
+                    "backgroundColor": "#7c3aed",
+                    "color": "white",
+                    "border": "none",
+                    "borderRadius": "8px",
+                    "padding": "8px 12px",
+                    "fontWeight": "600",
+                    "cursor": "pointer",
+                },
+            ),
+            html.Button(
+                "Add to Annotation Batch",
+                id="add-to-batch-btn",
+                style={
+                    "marginLeft": "8px",
+                    "backgroundColor": "#b45309",
                     "color": "white",
                     "border": "none",
                     "borderRadius": "8px",
@@ -947,6 +1063,9 @@ app.layout = html.Div([
     Input("reset-btn", "n_clicks"),
     Input("pca-view-mode", "value"),
     Input("embedding-method", "value"),
+    Input("pca-embedding", "clickData"),
+    Input("add-to-batch-btn", "n_clicks"),
+    Input("load-uncertain-btn", "n_clicks"),
     prevent_initial_call=False,
 )
 def update_dashboard(
@@ -957,12 +1076,16 @@ def update_dashboard(
     reset_clicks,
     pca_view_mode,
     embedding_method,
+    embedding_click_data,
+    add_to_batch_clicks,
+    load_uncertain_clicks,
 ):
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
     global batch_auto_count, pool_auto_count
     global model, phase, round_number
     global current_confidence_threshold, oracle_annotated_idx
+    global annotation_queue, selected_sample_id
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -972,26 +1095,57 @@ def update_dashboard(
 
     status_message = "Annotation Phase"
 
+    if trigger_id == "pca-embedding" and embedding_click_data:
+        selected_sample_id = int(embedding_click_data["points"][0]["customdata"][0])
+        status_message = f"Previewing Sample {selected_sample_id}"
+
+    if trigger_id == "add-to-batch-btn":
+        if selected_sample_id is None:
+            status_message = "No sample selected from embedding"
+        elif selected_sample_id in labeled_idx:
+            status_message = f"Sample {selected_sample_id} is already labeled"
+        elif selected_sample_id in annotation_queue:
+            status_message = f"Sample {selected_sample_id} already in queue"
+        elif len(annotation_queue) >= batch_size:
+            status_message = f"Annotation queue full ({batch_size})"
+        else:
+            annotation_queue.append(selected_sample_id)
+            status_message = f"Added Sample {selected_sample_id} to queue"
+            if phase != "annotation":
+                phase = "annotation"
+                current_pointer = 0
+
+    if trigger_id == "load-uncertain-btn":
+        current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
+        annotation_queue = list(current_batch[:batch_size])
+        current_pointer = 0
+        phase = "annotation"
+        selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else selected_sample_id
+        status_message = f"Loaded Top-K uncertain queue ({len(annotation_queue)}/{batch_size})"
+
     if trigger_id == "confidence-slider":
         current_confidence_threshold = confidence_value
         current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
         if phase == "annotation":
-            current_pointer = 0
-            status_message = "Annotation Phase"
+            status_message = "Confidence updated"
         else:
             status_message = "Confidence updated and reflected in all visualizations"
 
     if trigger_id == "annotate-btn" and phase == "annotation":
-        if len(current_batch) > 0 and current_pointer < len(current_batch):
-            sample_id = current_batch[current_pointer]
-            labeled_idx = np.append(labeled_idx, sample_id)
-            unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
-            oracle_annotated_idx = np.append(oracle_annotated_idx, sample_id)
-            current_pointer += 1
+        if len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
+            sample_id = int(annotation_queue[current_pointer])
+            if sample_id in unlabeled_idx:
+                labeled_idx = np.append(labeled_idx, sample_id)
+                unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
+                oracle_annotated_idx = np.append(oracle_annotated_idx, sample_id)
 
-            if current_pointer >= len(current_batch):
+            current_pointer += 1
+            if current_pointer < len(annotation_queue):
+                selected_sample_id = int(annotation_queue[current_pointer])
+
+            if current_pointer >= len(annotation_queue):
                 phase = "training"
-                status_message = "Round complete. Please Train the Model."
+                status_message = "Queue complete. Please Train the Model."
 
     if trigger_id == "train-btn" and phase == "training":
         round_number += 1
@@ -1003,9 +1157,12 @@ def update_dashboard(
         )
 
         current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_value)
+        annotation_queue = []
         current_pointer = 0
         phase = "annotation"
         current_confidence_threshold = confidence_value
+        selected_sample_id = None
+        status_message = "Model trained. Load Top-K or select samples from embedding."
 
     train_acc = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
     test_pred = model.predict(X_test)
@@ -1031,28 +1188,29 @@ def update_dashboard(
             specificity_history.append(specificity)
             round_history.append(round_number)
 
-    if len(current_batch) > 0 and phase == "annotation" and current_pointer < len(current_batch):
-        eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[current_batch[current_pointer]], mode="lines")])
-        annotate_disabled = False
-        train_disabled = True
-    elif phase == "training":
-        eeg_fig = go.Figure()
-        annotate_disabled = True
-        train_disabled = False
+    pending_queue = max(0, len(annotation_queue) - current_pointer)
+
+    if selected_sample_id is not None:
+        eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[selected_sample_id], mode="lines")])
+    elif pending_queue > 0:
+        preview_idx = int(annotation_queue[current_pointer])
+        eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[preview_idx], mode="lines")])
     else:
         eeg_fig = go.Figure()
-        annotate_disabled = True
-        train_disabled = True
 
-    if len(current_batch) == 0 and phase == "annotation":
-        status_message = "ACTIVE LEARNING COMPLETE."
-        annotate_disabled = True
-        train_disabled = True
+    annotate_disabled = not (phase == "annotation" and pending_queue > 0)
+    train_disabled = phase != "training"
+
+    if pending_queue == 0 and phase == "annotation" and len(annotation_queue) == 0:
+        status_message = "Queue empty. Load Top-K uncertain or click embedding and add samples."
 
     if trigger_id in [None, "url", "reset-btn"]:
-        status_message = "Annotation Phase"
-        annotate_disabled = False
-        train_disabled = True
+        pending_queue = max(0, len(annotation_queue) - current_pointer)
+        status_message = (
+            f"Annotation Phase | Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue}"
+        )
+        annotate_disabled = not (phase == "annotation" and pending_queue > 0)
+        train_disabled = phase != "training"
 
     heatmap_fig = build_confusion_heatmap(cm)
     donut_fig = build_data_donut()
@@ -1068,6 +1226,7 @@ def update_dashboard(
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
     test_accuracy_display = f"{test_acc:.4f}"
+    queue_status = f"Annotation Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue}"
 
     return (
         eeg_fig,
@@ -1084,7 +1243,7 @@ def update_dashboard(
         labeled_count,
         test_accuracy_display,
         f"{embedding_type} Embedding View",
-        "",
+        queue_status,
     )
 
 
