@@ -365,9 +365,9 @@ def initialize_active_learning():
     )
 
     current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
-    annotation_queue = list(current_batch[:batch_size])
+    annotation_queue = []
     current_pointer = 0
-    selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else None
+    selected_sample_id = None
 
 
 def build_learning_curve():
@@ -480,7 +480,7 @@ def _build_embedding_boundary_trace(embedding_coords):
     )
 
 
-def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold):
+def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold, sample_filter):
     if embedding_method == "umap" and UMAP_AVAILABLE and X_train_umap_dgrid is not None:
         embedding_coords = X_train_umap_dgrid
         embedding_type = "UMAP"
@@ -519,6 +519,10 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
     if len(oracle_annotated_idx) > 0:
         recently_queried[oracle_annotated_idx] = True
 
+    in_queue = np.zeros(len(X_train), dtype=bool)
+    if len(annotation_queue) > 0:
+        in_queue[np.array(annotation_queue, dtype=int)] = True
+
     embedding_df = pd.DataFrame({
         "Dim1": embedding_coords[:, 0],
         "Dim2": embedding_coords[:, 1],
@@ -530,12 +534,21 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
         "Prob_Non_Seizure": all_probs_class0,
         "Sample_ID": np.arange(len(X_train)),
         "Queried": ["Yes (Oracle Annotated)" if q else "No" for q in recently_queried],
+        "In_Queue": ["Yes" if q else "No" for q in in_queue],
         "Threshold_Status": threshold_flag,
     })
 
-    if pca_view_mode == "label_status":
+    plot_df = embedding_df
+    if sample_filter == "labeled":
+        plot_df = embedding_df[embedding_df["Status"] == "Labeled"].copy()
+    elif sample_filter == "unlabeled":
+        plot_df = embedding_df[embedding_df["Status"] == "Unlabeled"].copy()
+
+    if plot_df.empty:
+        embedding_fig = go.Figure()
+    elif pca_view_mode == "label_status":
         embedding_fig = px.scatter(
-            embedding_df,
+            plot_df,
             x="Dim1",
             y="Dim2",
             color="Status",
@@ -544,6 +557,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
             hover_data={
                 "Dim1": ":.3f",
                 "Dim2": ":.3f",
+                "Status": True,
                 "True_Label": True,
                 "Predicted_Label": True,
                 "Uncertainty": ":.4f",
@@ -551,6 +565,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
                 "Prob_Seizure": ":.4f",
                 "Sample_ID": True,
                 "Queried": True,
+                "In_Queue": True,
                 "Threshold_Status": True,
             },
             title=None,
@@ -558,7 +573,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
         )
     elif pca_view_mode == "true_class":
         embedding_fig = px.scatter(
-            embedding_df,
+            plot_df,
             x="Dim1",
             y="Dim2",
             color="True_Label",
@@ -574,6 +589,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
                 "Prob_Seizure": ":.4f",
                 "Sample_ID": True,
                 "Queried": True,
+                "In_Queue": True,
                 "Threshold_Status": True,
             },
             title=None,
@@ -581,7 +597,7 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
         )
     else:
         embedding_fig = px.scatter(
-            embedding_df,
+            plot_df,
             x="Dim1",
             y="Dim2",
             color="Uncertainty",
@@ -597,25 +613,40 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
                 "Prob_Seizure": ":.4f",
                 "Sample_ID": True,
                 "Queried": True,
+                "In_Queue": True,
                 "Threshold_Status": True,
             },
             title=None,
             labels={"Dim1": coord_labels["x"], "Dim2": coord_labels["y"]},
         )
 
-    border_width = [3 if q.startswith("Yes") else 0.5 for q in embedding_df["Queried"]]
-    embedding_fig.update_traces(
-        marker=dict(opacity=0.7, line=dict(width=border_width, color="black")),
-        selector=dict(type="scatter"),
-    )
+    if not plot_df.empty:
+        embedding_fig.update_traces(
+            marker=dict(opacity=0.7, line=dict(width=0.5, color="black")),
+            selector=dict(type="scatter"),
+        )
+
+        queried_df = plot_df[plot_df["Queried"].str.startswith("Yes")]
+        if not queried_df.empty:
+            embedding_fig.add_trace(
+                go.Scatter(
+                    x=queried_df["Dim1"],
+                    y=queried_df["Dim2"],
+                    mode="markers",
+                    marker=dict(size=9, color="rgba(0,0,0,0)", line=dict(width=2.5, color="black")),
+                    name="Oracle Annotated",
+                    hoverinfo="skip",
+                    showlegend=True,
+                )
+            )
 
     if selected_sample_id is not None:
-        selected_mask = embedding_df["Sample_ID"] == selected_sample_id
+        selected_mask = plot_df["Sample_ID"] == selected_sample_id
         if selected_mask.any():
             embedding_fig.add_trace(
                 go.Scatter(
-                    x=embedding_df[selected_mask]["Dim1"],
-                    y=embedding_df[selected_mask]["Dim2"],
+                    x=plot_df[selected_mask]["Dim1"],
+                    y=plot_df[selected_mask]["Dim2"],
                     mode="markers",
                     marker=dict(size=16, color="#fde047", line=dict(width=3, color="black")),
                     name="Selected EEG",
@@ -629,10 +660,10 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
         embedding_fig.add_trace(boundary_trace)
         embedding_fig.data = (embedding_fig.data[-1],) + embedding_fig.data[:-1]
 
-    x_min = float(embedding_df["Dim1"].min())
-    x_max = float(embedding_df["Dim1"].max())
-    y_min = float(embedding_df["Dim2"].min())
-    y_max = float(embedding_df["Dim2"].max())
+    x_min = float(plot_df["Dim1"].min()) if not plot_df.empty else float(embedding_df["Dim1"].min())
+    x_max = float(plot_df["Dim1"].max()) if not plot_df.empty else float(embedding_df["Dim1"].max())
+    y_min = float(plot_df["Dim2"].min()) if not plot_df.empty else float(embedding_df["Dim2"].min())
+    y_max = float(plot_df["Dim2"].max()) if not plot_df.empty else float(embedding_df["Dim2"].max())
     x_pad = 0.03 * (x_max - x_min if x_max > x_min else 1.0)
     y_pad = 0.03 * (y_max - y_min if y_max > y_min else 1.0)
 
@@ -651,6 +682,22 @@ def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold
             bgcolor="rgba(255,255,255,0.7)",
         ),
     )
+
+    if plot_df.empty:
+        embedding_fig.update_layout(
+            annotations=[
+                dict(
+                    text="No samples for selected filter",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                    font=dict(size=14, color="#64748b"),
+                )
+            ]
+        )
+
     return embedding_fig, embedding_type
 
 
@@ -913,6 +960,18 @@ app.layout = html.Div([
                         inline=True,
                         style={"fontSize": "12px"},
                     ),
+                    html.Label("Filter", style={"fontWeight": "700", "color": "#334155", "marginLeft": "10px", "fontSize": "12px"}),
+                    dcc.RadioItems(
+                        id="sample-filter",
+                        options=[
+                            {"label": " All", "value": "all"},
+                            {"label": " Labeled", "value": "labeled"},
+                            {"label": " Unlabeled", "value": "unlabeled"},
+                        ],
+                        value="all",
+                        inline=True,
+                        style={"fontSize": "12px"},
+                    ),
                 ], style={"display": "flex", "alignItems": "center", "gap": "6px", "flexWrap": "wrap", "paddingTop": "4px"}),
             ], style={
                 "width": "42%",
@@ -1063,6 +1122,7 @@ app.layout = html.Div([
     Input("reset-btn", "n_clicks"),
     Input("pca-view-mode", "value"),
     Input("embedding-method", "value"),
+    Input("sample-filter", "value"),
     Input("pca-embedding", "clickData"),
     Input("add-to-batch-btn", "n_clicks"),
     Input("load-uncertain-btn", "n_clicks"),
@@ -1076,6 +1136,7 @@ def update_dashboard(
     reset_clicks,
     pca_view_mode,
     embedding_method,
+    sample_filter,
     embedding_click_data,
     add_to_batch_clicks,
     load_uncertain_clicks,
@@ -1133,17 +1194,19 @@ def update_dashboard(
 
     if trigger_id == "annotate-btn" and phase == "annotation":
         if len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
-            sample_id = int(annotation_queue[current_pointer])
+            sample_id = int(annotation_queue.pop(current_pointer))
             if sample_id in unlabeled_idx:
                 labeled_idx = np.append(labeled_idx, sample_id)
                 unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
                 oracle_annotated_idx = np.append(oracle_annotated_idx, sample_id)
 
-            current_pointer += 1
-            if current_pointer < len(annotation_queue):
+            current_pointer = 0
+            if len(annotation_queue) > 0:
                 selected_sample_id = int(annotation_queue[current_pointer])
+            else:
+                selected_sample_id = None
 
-            if current_pointer >= len(annotation_queue):
+            if len(annotation_queue) == 0:
                 phase = "training"
                 status_message = "Queue complete. Please Train the Model."
 
@@ -1220,6 +1283,7 @@ def update_dashboard(
         pca_view_mode,
         embedding_method,
         current_confidence_threshold,
+        sample_filter,
     )
     uncertainty_hist = build_uncertainty_histogram(current_confidence_threshold)
 
