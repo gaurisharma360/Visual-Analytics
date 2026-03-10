@@ -546,63 +546,109 @@ def build_uncertainty_histogram(confidence_threshold):
     all_train_uncertainty = 1 - np.max(all_train_probs, axis=1)
     all_train_confidence = np.max(all_train_probs, axis=1)
 
+    # Calculate counts for percentage calculation
+    total_samples = len(X_train)
+    initial_count = len(initial_labeled_idx)
+    oracle_count = len(oracle_annotated_idx)
+
+    # IMPORTANT: Use current_batch (not all uncertain samples) to match donut chart
+    doctor_count = len(current_batch)
+    auto_batch_count = batch_auto_count
+    auto_pool_count = pool_auto_count
+
     hist_fig = go.Figure()
 
-    if len(initial_labeled_idx) > 0:
+    if initial_count > 0:
+        initial_pct = (initial_count / total_samples) * 100
         hist_fig.add_trace(go.Histogram(
             x=all_train_uncertainty[initial_labeled_idx],
-            name="Initial Labeled (Random)",
+            name=f"Initial Labeled: {initial_count} ({initial_pct:.1f}%)",
             marker_color="#52c41a",
             opacity=0.7,
             nbinsx=30,
         ))
 
-    if len(oracle_annotated_idx) > 0:
+    if oracle_count > 0:
+        oracle_pct = (oracle_count / total_samples) * 100
         hist_fig.add_trace(go.Histogram(
             x=all_train_uncertainty[oracle_annotated_idx],
-            name="Oracle Annotated",
+            name=f"Oracle Annotated: {oracle_count} ({oracle_pct:.1f}%)",
             marker_color="#237804",
             opacity=0.7,
             nbinsx=30,
         ))
 
-    if len(unlabeled_idx) > 0:
-        unlabeled_uncertainty = all_train_uncertainty[unlabeled_idx]
+    # Show Auto (Pool) - confident samples outside top-10 batch
+    if auto_pool_count > 0:
+        # Get all unlabeled samples
         unlabeled_confidence = all_train_confidence[unlabeled_idx]
+        unlabeled_uncertainty = all_train_uncertainty[unlabeled_idx]
 
-        above_threshold = unlabeled_confidence >= confidence_threshold
-        below_threshold = unlabeled_confidence < confidence_threshold
+        # Find confident samples (outside the current batch)
+        confident_mask = unlabeled_confidence >= confidence_threshold
+        batch_mask = np.isin(unlabeled_idx, current_batch)
+        pool_mask = confident_mask & ~batch_mask
 
-        if np.sum(above_threshold) > 0:
+        pool_pct = (auto_pool_count / total_samples) * 100
+        hist_fig.add_trace(go.Histogram(
+            x=unlabeled_uncertainty[pool_mask],
+            name=f"Auto (Pool): {auto_pool_count} ({pool_pct:.1f}%)",
+            marker_color="#3498db",
+            opacity=0.7,
+            nbinsx=30,
+        ))
+
+    # Show Auto (Batch) - confident samples IN top-10 batch
+    if auto_batch_count > 0:
+        # These are in top-10 but confident enough to auto-classify
+        # They would be in current_batch if they were uncertain
+        # So we need to find top-10 samples that are confident
+        unlabeled_confidence = all_train_confidence[unlabeled_idx]
+        unlabeled_uncertainty = all_train_uncertainty[unlabeled_idx]
+
+        # Get top-10 uncertain indices
+        uncertainty_full = 1 - unlabeled_confidence
+        sorted_idx = np.argsort(uncertainty_full)[::-1]
+        top_k = sorted_idx[:batch_size]
+        top_k_samples = unlabeled_idx[top_k]
+
+        # Find which ones are confident (not in current_batch)
+        confident_in_batch = np.setdiff1d(top_k_samples, current_batch)
+        confident_in_batch_mask = np.isin(unlabeled_idx, confident_in_batch)
+
+        batch_pct = (auto_batch_count / total_samples) * 100
+        if np.sum(confident_in_batch_mask) > 0:
             hist_fig.add_trace(go.Histogram(
-                x=unlabeled_uncertainty[above_threshold],
-                name="Unlabeled - Confident (Auto)",
-                marker_color="#3498db",
+                x=unlabeled_uncertainty[confident_in_batch_mask],
+                name=f"Auto (Batch): {auto_batch_count} ({batch_pct:.1f}%)",
+                marker_color="#1d4ed8",
                 opacity=0.7,
                 nbinsx=30,
             ))
 
-        if np.sum(below_threshold) > 0:
-            hist_fig.add_trace(go.Histogram(
-                x=unlabeled_uncertainty[below_threshold],
-                name="Unlabeled - Uncertain (Needs Oracle)",
-                marker_color="#e74c3c",
-                opacity=0.7,
-                nbinsx=30,
-            ))
+    # Show Needs Doctor - samples in current_batch (matching donut chart)
+    if doctor_count > 0:
+        doctor_pct = (doctor_count / total_samples) * 100
+        hist_fig.add_trace(go.Histogram(
+            x=all_train_uncertainty[current_batch],
+            name=f"Needs Doctor: {doctor_count} ({doctor_pct:.1f}%)",
+            marker_color="#e74c3c",
+            opacity=0.7,
+            nbinsx=30,
+        ))
 
-        threshold_uncertainty = 1 - confidence_threshold
-        hist_fig.add_vline(
-            x=threshold_uncertainty,
-            line_dash="dash",
-            line_color="black",
-            line_width=2,
-            annotation_text=(
-                f"Threshold @ conf={confidence_threshold:.2f} "
-                f"(uncertainty={threshold_uncertainty:.2f})"
-            ),
-            annotation_position="top",
-        )
+    threshold_uncertainty = 1 - confidence_threshold
+    hist_fig.add_vline(
+        x=threshold_uncertainty,
+        line_dash="dash",
+        line_color="black",
+        line_width=2,
+        annotation_text=(
+            f"Threshold @ conf={confidence_threshold:.2f} "
+            f"(uncertainty={threshold_uncertainty:.2f})"
+        ),
+        annotation_position="top",
+    )
 
     hist_fig.update_layout(
         title=None,
@@ -628,6 +674,7 @@ def build_uncertainty_histogram(confidence_threshold):
             dtick=1,
         ),
     )
+
     return hist_fig
 
 
