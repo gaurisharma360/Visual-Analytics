@@ -13,8 +13,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 import numpy as np
 import pandas as pd
-from scipy.signal import welch
+from scipy.signal import welch, butter, filtfilt
 from scipy.stats import skew, kurtosis
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
@@ -22,6 +23,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.decomposition import PCA
+from scipy.signal import butter, filtfilt
 
 try:
     from umap import UMAP
@@ -32,7 +34,7 @@ except ImportError:
 
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import plotly.graph_objs as go
 import plotly.express as px
 
@@ -68,6 +70,90 @@ def extract_features(X_raw, fs=173.61):
             delta, theta, alpha, beta
         ])
     return np.array(features)
+
+
+# ==========================================================
+# SIGNAL PROCESSING HELPERS FOR FEATURE→EEG MAPPING
+# ==========================================================
+
+def butter_bandpass(lowcut, highcut, fs, order=5):
+    """Design a bandpass filter."""
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(order, [low, high], btype='band')
+    return b, a
+
+
+def bandpass_filter(data, lowcut, highcut, fs, order=5):
+    """Apply bandpass filter to signal."""
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+    y = filtfilt(b, a, data)
+    return y
+
+
+def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
+    """
+    Highlight the EEG regions corresponding to a specific feature.
+    Returns indices/ranges to highlight based on the feature type.
+    """
+    n_samples = len(signal)
+    
+    if feature_name == "Delta Power":
+        # Highlight slow oscillations (0.5-4 Hz)
+        filtered = bandpass_filter(signal, 0.5, 4, fs)
+        return filtered, "Delta band (0.5-4 Hz)"
+    
+    elif feature_name == "Theta Power":
+        # Highlight 4-8 Hz oscillations
+        filtered = bandpass_filter(signal, 4, 8, fs)
+        return filtered, "Theta band (4-8 Hz)"
+    
+    elif feature_name == "Alpha Power":
+        # Highlight 8-13 Hz oscillations
+        filtered = bandpass_filter(signal, 8, 13, fs)
+        return filtered, "Alpha band (8-13 Hz)"
+    
+    elif feature_name == "Beta Power":
+        # Highlight 13-30 Hz oscillations
+        filtered = bandpass_filter(signal, 13, 30, fs)
+        return filtered, "Beta band (13-30 Hz)"
+    
+    elif feature_name == "Std Dev" or feature_name == "RMS":
+        # Highlight high energy regions
+        window_size = int(fs * 0.5)  # 0.5 second windows
+        energy = np.array([np.std(signal[i:i+window_size]) 
+                          for i in range(0, len(signal)-window_size, window_size//2)])
+        return energy, "High variability regions"
+    
+    elif feature_name == "Peak-to-Peak":
+        # Find large amplitude spikes
+        window_size = int(fs * 0.2)  # 0.2 second windows
+        p2p = np.array([np.ptp(signal[i:i+window_size]) 
+                       for i in range(0, len(signal)-window_size, window_size//4)])
+        return p2p, "Large amplitude spikes"
+    
+    elif feature_name == "Kurtosis":
+        # Highlight sharp peaks
+        from scipy.ndimage import gaussian_filter1d
+        abs_signal = np.abs(signal)
+        smoothed = gaussian_filter1d(abs_signal, sigma=5)
+        return smoothed, "Sharp peaks/spikes"
+    
+    elif feature_name == "Skewness":
+        # Highlight asymmetric patterns
+        from scipy.ndimage import gaussian_filter1d
+        smoothed = gaussian_filter1d(signal, sigma=3)
+        return smoothed, "Asymmetric waveform segments"
+    
+    elif feature_name == "Mean":
+        # Show baseline shifts
+        from scipy.ndimage import uniform_filter1d
+        baseline = uniform_filter1d(signal, size=int(fs))
+        return baseline, "Baseline trend"
+    
+    else:
+        return signal, "Raw signal"
 
 
 # ==========================================================
@@ -243,6 +329,9 @@ round_history = []
 sensitivity_history = []
 specificity_history = []
 
+# Track selected feature for EEG highlighting
+selected_feature_for_highlight = None
+
 
 def initialize_active_learning():
     global labeled_idx, unlabeled_idx
@@ -397,6 +486,165 @@ def build_data_donut():
             font=dict(size=9),
         ),
     )
+    return fig
+
+
+def build_feature_importance(sample_idx, importance_mode="contribution"):
+    """
+    Build feature importance visualization for a specific sample.
+
+    Args:
+        sample_idx: Index of the sample to explain
+        importance_mode: "contribution" or "uncertainty"
+    """
+    # Feature names matching the extracted features
+    feature_names = [
+        "Mean", "Std Dev", "RMS", "Peak-to-Peak",
+        "Skewness", "Kurtosis",
+        "Delta Power", "Theta Power", "Alpha Power", "Beta Power"
+    ]
+
+    # Get model coefficients and sample features
+    if hasattr(model.named_steps['clf'], 'coef_'):
+        weights = model.named_steps['clf'].coef_[0]  # Shape: (n_features,)
+    else:
+        # Model not trained yet
+        return go.Figure().update_layout(
+            title="Model not trained yet",
+            template="plotly_white",
+        )
+
+    # Transform the sample
+    sample_features = X_train[sample_idx:sample_idx+1]
+    sample_scaled = model.named_steps['scaler'].transform(sample_features)[0]
+
+    # Calculate contributions: w_i * x_i
+    contributions = weights * sample_scaled
+
+    # Get prediction
+    probs = model.predict_proba(X_train[sample_idx:sample_idx+1])[0]
+    pred_class = np.argmax(probs)
+    pred_prob = probs[1]  # Probability of seizure
+
+    if importance_mode == "contribution":
+        # Feature Contribution View
+        fig = go.Figure()
+
+        # Sort by absolute contribution
+        sorted_indices = np.argsort(np.abs(contributions))[::-1]
+
+        colors = ['#e74c3c' if c > 0 else '#3498db' for c in contributions[sorted_indices]]
+
+        fig.add_trace(go.Bar(
+            y=[feature_names[i] for i in sorted_indices],
+            x=contributions[sorted_indices],
+            orientation='h',
+            marker=dict(color=colors),
+            text=[f"{contributions[i]:.3f}" for i in sorted_indices],
+            textposition='outside',
+            textfont=dict(size=10),
+        ))
+
+        fig.update_layout(
+            title=f"Feature Contribution (Pred: {'Seizure' if pred_class == 1 else 'Non-Seizure'}, Prob: {pred_prob:.3f})",
+            xaxis_title="Contribution to Seizure Prediction",
+            yaxis_title="",
+            template="plotly_white",
+            height=320,
+            margin=dict(l=120, r=40, t=50, b=50),
+            showlegend=False,
+        )
+
+        # Add vertical line at 0
+        fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
+
+        # Add annotation
+        fig.add_annotation(
+            text="← Pushes toward Non-Seizure | Pushes toward Seizure →",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.15,
+            showarrow=False,
+            font=dict(size=10, color="#666"),
+        )
+
+    else:  # uncertainty mode
+        # Uncertainty Explanation View
+        positive_mask = contributions > 0
+        negative_mask = contributions < 0
+
+        pos_contributions = contributions[positive_mask]
+        neg_contributions = contributions[negative_mask]
+        pos_features = [feature_names[i] for i in range(len(feature_names)) if positive_mask[i]]
+        neg_features = [feature_names[i] for i in range(len(feature_names)) if negative_mask[i]]
+
+        # Calculate uncertainty
+        uncertainty = 1 - np.max(probs)
+
+        fig = go.Figure()
+
+        # Positive evidence (pushes toward seizure)
+        if len(pos_contributions) > 0:
+            sorted_pos_idx = np.argsort(pos_contributions)[::-1]
+            fig.add_trace(go.Bar(
+                y=[pos_features[i] for i in sorted_pos_idx],
+                x=[pos_contributions[i] for i in sorted_pos_idx],
+                orientation='h',
+                name="Evidence FOR Seizure",
+                marker=dict(color='#e74c3c'),
+                text=[f"+{pos_contributions[i]:.3f}" for i in sorted_pos_idx],
+                textposition='outside',
+            ))
+
+        # Negative evidence (pushes toward non-seizure)
+        if len(neg_contributions) > 0:
+            sorted_neg_idx = np.argsort(np.abs(neg_contributions))[::-1]
+            fig.add_trace(go.Bar(
+                y=[neg_features[i] for i in sorted_neg_idx],
+                x=[neg_contributions[i] for i in sorted_neg_idx],
+                orientation='h',
+                name="Evidence AGAINST Seizure",
+                marker=dict(color='#3498db'),
+                text=[f"{neg_contributions[i]:.3f}" for i in sorted_neg_idx],
+                textposition='outside',
+            ))
+
+        fig.update_layout(
+            title=f"Why Uncertain? (Uncertainty: {uncertainty:.3f}, Prob: {pred_prob:.3f})",
+            xaxis_title="Contribution Magnitude",
+            yaxis_title="",
+            template="plotly_white",
+            height=320,
+            margin=dict(l=120, r=40, t=80, b=50),
+            barmode='relative',
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5,
+            ),
+        )
+
+        # Add vertical line at 0
+        fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
+
+        # Add explanation text
+        total_pos = np.sum(pos_contributions)
+        total_neg = np.sum(neg_contributions)
+        balance = total_pos + total_neg
+
+        explanation = f"Total Evidence: FOR={total_pos:.2f}, AGAINST={total_neg:.2f}, Balance={balance:.2f}"
+        if abs(balance) < 0.5:
+            explanation += " → Conflicting evidence!"
+
+        fig.add_annotation(
+            text=explanation,
+            xref="paper", yref="paper",
+            x=0.5, y=-0.15,
+            showarrow=False,
+            font=dict(size=10, color="#666"),
+        )
+
     return fig
 
 
@@ -756,6 +1004,9 @@ app.index_string = '''
 
 app.layout = html.Div([
     dcc.Location(id="url", refresh=True),
+    dcc.Store(id="selected-feature-store", data=None),  # Track clicked feature
+    dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
+    dcc.Store(id="current-sample-store", data=0),  # Track current sample index
 
     # Top bar
     html.Div([
@@ -1057,6 +1308,148 @@ app.layout = html.Div([
             "gap": "6px",
             "flexWrap": "wrap",
         }),
+
+        # Feature Explanation Panel (Full Width Below)
+        html.Div([
+            # Feature Contribution Visualization
+            html.Div([
+                html.H3("Feature Explanation & EEG Evidence",
+                        style={"margin": "0 0 8px 0", "color": "#0f172a", "fontSize": "clamp(14px, 2vw, 16px)"}),
+                html.Div([
+                    html.Label("View Mode:", style={"fontWeight": "700", "fontSize": "12px", "marginRight": "10px"}),
+                    dcc.RadioItems(
+                        id="importance-mode",
+                        options=[
+                            {"label": " Feature Contribution", "value": "contribution"},
+                            {"label": " Uncertainty Explanation", "value": "uncertainty"},
+                        ],
+                        value="contribution",
+                        inline=True,
+                        style={"fontSize": "12px"},
+                    ),
+                    html.Button(
+                        "Enable Perturbation Mode",
+                        id="perturbation-toggle",
+                        style={
+                            "marginLeft": "20px",
+                            "backgroundColor": "#f3f4f6",
+                            "color": "#374151",
+                            "border": "1px solid #d1d5db",
+                            "borderRadius": "6px",
+                            "padding": "4px 12px",
+                            "fontSize": "11px",
+                            "cursor": "pointer",
+                        },
+                    ),
+                ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "gap": "10px"}),
+                html.Div([
+                    html.P(
+                        "💡 Click on a feature bar to see corresponding evidence in the EEG waveform",
+                        style={"fontSize": "11px", "color": "#6b7280", "margin": "0 0 8px 0", "fontStyle": "italic"},
+                    ),
+                ]),
+                dcc.Graph(
+                    id="feature-importance", 
+                    style={"height": "380px"}, 
+                    config={'responsive': True, 'displayModeBar': True}
+                ),
+            ], style={
+                "flex": "2 1 500px",
+                "minWidth": "400px",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "10px",
+                "padding": "10px",
+                "display": "flex",
+                "flexDirection": "column",
+            }),
+            
+            # Feature Perturbation Panel
+            html.Div([
+                html.H3("Feature Perturbation",
+                        style={"margin": "0 0 8px 0", "color": "#0f172a", "fontSize": "clamp(13px, 1.8vw, 15px)"}),
+                html.Div(
+                    id="perturbation-controls",
+                    style={"display": "none"},  # Hidden by default
+                    children=[
+                        html.P(
+                            "Adjust features to explore counterfactual predictions:",
+                            style={"fontSize": "11px", "color": "#6b7280", "marginBottom": "10px"},
+                        ),
+                        html.Div(id="feature-sliders", children=[
+                            html.Div([
+                                html.Label("Delta Power", style={"fontSize": "11px", "fontWeight": "600"}),
+                                dcc.Slider(id="slider-delta", min=-3, max=3, step=0.1, value=0, 
+                                          marks={-3: "-3σ", 0: "0", 3: "+3σ"}),
+                            ], style={"marginBottom": "8px"}),
+                            html.Div([
+                                html.Label("Theta Power", style={"fontSize": "11px", "fontWeight": "600"}),
+                                dcc.Slider(id="slider-theta", min=-3, max=3, step=0.1, value=0,
+                                          marks={-3: "-3σ", 0: "0", 3: "+3σ"}),
+                            ], style={"marginBottom": "8px"}),
+                            html.Div([
+                                html.Label("Beta Power", style={"fontSize": "11px", "fontWeight": "600"}),
+                                dcc.Slider(id="slider-beta", min=-3, max=3, step=0.1, value=0,
+                                          marks={-3: "-3σ", 0: "0", 3: "+3σ"}),
+                            ], style={"marginBottom": "8px"}),
+                            html.Div([
+                                html.Label("Kurtosis", style={"fontSize": "11px", "fontWeight": "600"}),
+                                dcc.Slider(id="slider-kurtosis", min=-3, max=3, step=0.1, value=0,
+                                          marks={-3: "-3σ", 0: "0", 3: "+3σ"}),
+                            ], style={"marginBottom": "8px"}),
+                        ]),
+                        html.Div([
+                            html.H4("Perturbed Prediction:", style={"fontSize": "13px", "marginTop": "12px"}),
+                            html.Div(id="perturbed-prediction", style={
+                                "padding": "8px",
+                                "backgroundColor": "#f9fafb",
+                                "borderRadius": "6px",
+                                "fontSize": "12px",
+                                "marginTop": "6px",
+                            }),
+                        ]),
+                        html.Button(
+                            "Reset Perturbations",
+                            id="reset-perturbation",
+                            style={
+                                "marginTop": "12px",
+                                "backgroundColor": "#ef4444",
+                                "color": "white",
+                                "border": "none",
+                                "borderRadius": "6px",
+                                "padding": "6px 12px",
+                                "fontSize": "11px",
+                                "cursor": "pointer",
+                                "width": "100%",
+                            },
+                        ),
+                    ],
+                ),
+                html.Div(
+                    id="perturbation-placeholder",
+                    children=[
+                        html.P(
+                            "Click 'Enable Perturbation Mode' to explore how changing features affects predictions",
+                            style={"fontSize": "12px", "color": "#9ca3af", "textAlign": "center", "padding": "40px 20px"},
+                        ),
+                    ],
+                ),
+            ], style={
+                "flex": "1 1 300px",
+                "minWidth": "280px",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "10px",
+                "padding": "10px",
+                "marginLeft": "8px",
+            }),
+        ], style={
+            "width": "100%",
+            "marginTop": "6px",
+            "display": "flex",
+            "gap": "8px",
+            "flexWrap": "wrap",
+        }),
     ], className="main-workspace", style={
         "display": "flex",
         "flexDirection": "column",
@@ -1093,11 +1486,13 @@ app.layout = html.Div([
     Output("data-donut", "figure"),
     Output("pca-embedding", "figure"),
     Output("uncertainty-histogram", "figure"),
+    Output("feature-importance", "figure"),
     Output("round-display", "children"),
     Output("labeled-count", "children"),
     Output("test-accuracy", "children"),
     Output("embedding-title", "children"),
     Output("threshold-label", "children"),
+    Output("current-sample-store", "data"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
@@ -1105,6 +1500,8 @@ app.layout = html.Div([
     Input("reset-btn", "n_clicks"),
     Input("pca-view-mode", "value"),
     Input("embedding-method", "value"),
+    Input("importance-mode", "value"),
+    State("selected-feature-store", "data"),
     prevent_initial_call=False,
 )
 def update_dashboard(
@@ -1115,6 +1512,8 @@ def update_dashboard(
         reset_clicks,
         pca_view_mode,
         embedding_method,
+        importance_mode,
+        selected_feature,
 ):
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
@@ -1190,15 +1589,87 @@ def update_dashboard(
             round_history.append(round_number)
 
     if len(current_batch) > 0 and phase == "annotation" and current_pointer < len(current_batch):
-        eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[current_batch[current_pointer]], mode="lines",
-                                             line=dict(color='#1d4ed8', width=1))])
+        current_sample_idx = current_batch[current_pointer]
+        raw_signal = X_raw_train[current_sample_idx]
+        
+        eeg_fig = go.Figure()
+        
+        # Add raw EEG signal
+        eeg_fig.add_trace(go.Scatter(
+            y=raw_signal, 
+            mode="lines",
+            line=dict(color='#1d4ed8', width=1),
+            name="Raw EEG",
+            showlegend=True,
+        ))
+        
+        # If a feature is selected, highlight the corresponding evidence
+        if selected_feature:
+            try:
+                highlighted_signal, description = highlight_feature_in_eeg(raw_signal, selected_feature)
+                
+                # For frequency bands, overlay the filtered signal
+                if selected_feature in ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]:
+                    eeg_fig.add_trace(go.Scatter(
+                        y=highlighted_signal,
+                        mode="lines",
+                        line=dict(color='#ef4444', width=2, dash='solid'),
+                        name=f"{selected_feature} ({description})",
+                        showlegend=True,
+                        opacity=0.8,
+                    ))
+                    
+                # For other features, show as overlay or annotation
+                elif selected_feature in ["Kurtosis", "Skewness", "Mean"]:
+                    eeg_fig.add_trace(go.Scatter(
+                        y=highlighted_signal,
+                        mode="lines",
+                        line=dict(color='#f59e0b', width=1.5, dash='dot'),
+                        name=f"{description}",
+                        showlegend=True,
+                        opacity=0.7,
+                    ))
+                    
+                # For window-based features (Std Dev, Peak-to-Peak, RMS)
+                else:
+                    # Add shaded regions for high values
+                    if len(highlighted_signal) > 0:
+                        threshold = np.percentile(highlighted_signal, 75)  # Top 25%
+                        high_regions = highlighted_signal > threshold
+                        
+                        # Create annotation about high-energy regions
+                        eeg_fig.add_annotation(
+                            text=f"🔍 {selected_feature}: {description}",
+                            xref="paper", yref="paper",
+                            x=0.5, y=1.05,
+                            showarrow=False,
+                            font=dict(size=11, color="#ef4444"),
+                            bgcolor="#fef2f2",
+                            bordercolor="#ef4444",
+                            borderwidth=1,
+                        )
+                        
+            except Exception as e:
+                print(f"Error highlighting feature: {e}")
+        
         eeg_fig.update_layout(
-            xaxis_title="Time",
-            yaxis_title="Amplitude",
+            title=f"Sample {current_sample_idx} | True Label: {'Seizure' if y_train[current_sample_idx] == 1 else 'Non-Seizure'}",
+            xaxis_title="Time (samples)",
+            yaxis_title="Amplitude (μV)",
             template="plotly_white",
-            margin=dict(l=40, r=20, t=20, b=40),
+            margin=dict(l=50, r=20, t=60, b=50),
             autosize=True,
+            hovermode="x unified",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.3,
+                xanchor="center",
+                x=0.5,
+                font=dict(size=10),
+            ),
         )
+        
         annotate_disabled = False
         train_disabled = True
     elif phase == "training":
@@ -1243,9 +1714,22 @@ def update_dashboard(
     )
     uncertainty_hist = build_uncertainty_histogram(current_confidence_threshold)
 
+    # Build feature importance for current sample being annotated
+    if len(current_batch) > 0 and current_pointer < len(current_batch):
+        feature_fig = build_feature_importance(current_batch[current_pointer], importance_mode)
+    elif len(labeled_idx) > 0:
+        # Show most recent labeled sample
+        feature_fig = build_feature_importance(labeled_idx[-1], importance_mode)
+    else:
+        # Show first sample as default
+        feature_fig = build_feature_importance(0, importance_mode)
+
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
     test_accuracy_display = f"{test_acc:.4f}"
+    
+    # Store current sample index
+    current_sample_idx = current_batch[current_pointer] if (len(current_batch) > 0 and current_pointer < len(current_batch)) else (labeled_idx[-1] if len(labeled_idx) > 0 else 0)
 
     return (
         eeg_fig,
@@ -1258,12 +1742,165 @@ def update_dashboard(
         donut_fig,
         embedding_fig,
         uncertainty_hist,
+        feature_fig,
         round_display,
         labeled_count,
         test_accuracy_display,
         f"{embedding_type} Embedding View",
         "",
+        current_sample_idx,
     )
+
+
+# ==========================================================
+# FEATURE CLICK CALLBACK - Update selected feature store
+# ==========================================================
+
+@app.callback(
+    Output("selected-feature-store", "data"),
+    Input("feature-importance", "clickData"),
+    prevent_initial_call=True,
+)
+def handle_feature_click(click_data):
+    """When user clicks a feature bar, store it for EEG highlighting."""
+    if click_data and "points" in click_data:
+        # Extract the feature name from the clicked point
+        feature_name = click_data["points"][0].get("y", None)
+        return feature_name
+    return None
+
+
+# ==========================================================
+# PERTURBATION MODE CALLBACKS
+# ==========================================================
+
+@app.callback(
+    Output("perturbation-mode-store", "data"),
+    Output("perturbation-toggle", "children"),
+    Output("perturbation-toggle", "style"),
+    Output("perturbation-controls", "style"),
+    Output("perturbation-placeholder", "style"),
+    Input("perturbation-toggle", "n_clicks"),
+    State("perturbation-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_perturbation_mode(n_clicks, current_mode):
+    """Toggle perturbation mode on/off."""
+    new_mode = not current_mode if current_mode is not None else True
+    
+    if new_mode:
+        button_text = "Disable Perturbation Mode"
+        button_style = {
+            "marginLeft": "20px",
+            "backgroundColor": "#ef4444",
+            "color": "white",
+            "border": "none",
+            "borderRadius": "6px",
+            "padding": "4px 12px",
+            "fontSize": "11px",
+            "cursor": "pointer",
+        }
+        controls_style = {"display": "block"}
+        placeholder_style = {"display": "none"}
+    else:
+        button_text = "Enable Perturbation Mode"
+        button_style = {
+            "marginLeft": "20px",
+            "backgroundColor": "#f3f4f6",
+            "color": "#374151",
+            "border": "1px solid #d1d5db",
+            "borderRadius": "6px",
+            "padding": "4px 12px",
+            "fontSize": "11px",
+            "cursor": "pointer",
+        }
+        controls_style = {"display": "none"}
+        placeholder_style = {"display": "block"}
+    
+    return new_mode, button_text, button_style, controls_style, placeholder_style
+
+
+@app.callback(
+    Output("perturbed-prediction", "children"),
+    Input("slider-delta", "value"),
+    Input("slider-theta", "value"),
+    Input("slider-beta", "value"),
+    Input("slider-kurtosis", "value"),
+    State("current-sample-store", "data"),
+    prevent_initial_call=True,
+)
+def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_shift, sample_idx):
+    """Compute perturbed prediction when sliders change."""
+    if sample_idx is None or model is None:
+        return "No sample selected"
+    
+    try:
+        # Get original features
+        original_features = X_train[sample_idx:sample_idx+1].copy()
+        perturbed_features = original_features.copy()
+        
+        # Get feature indices
+        feature_names = ["Mean", "Std Dev", "RMS", "Peak-to-Peak", "Skewness", "Kurtosis",
+                        "Delta Power", "Theta Power", "Alpha Power", "Beta Power"]
+        
+        # Apply perturbations (shifts in scaled space)
+        # Delta Power (index 6)
+        perturbed_features[0, 6] += delta_shift * np.std(X_train[:, 6])
+        # Theta Power (index 7)
+        perturbed_features[0, 7] += theta_shift * np.std(X_train[:, 7])
+        # Beta Power (index 9)
+        perturbed_features[0, 9] += beta_shift * np.std(X_train[:, 9])
+        # Kurtosis (index 5)
+        perturbed_features[0, 5] += kurtosis_shift * np.std(X_train[:, 5])
+        
+        # Get original and perturbed predictions
+        original_probs = model.predict_proba(original_features)[0]
+        perturbed_probs = model.predict_proba(perturbed_features)[0]
+        
+        original_pred = "Seizure" if original_probs[1] > 0.5 else "Non-Seizure"
+        perturbed_pred = "Seizure" if perturbed_probs[1] > 0.5 else "Non-Seizure"
+        
+        # Calculate change
+        prob_change = perturbed_probs[1] - original_probs[1]
+        
+        result = html.Div([
+            html.Div([
+                html.Strong("Original: "),
+                html.Span(f"{original_pred} ({original_probs[1]:.3f})"),
+            ], style={"marginBottom": "4px"}),
+            html.Div([
+                html.Strong("Perturbed: "),
+                html.Span(
+                    f"{perturbed_pred} ({perturbed_probs[1]:.3f})",
+                    style={"color": "#ef4444" if perturbed_pred != original_pred else "#0f172a"},
+                ),
+            ], style={"marginBottom": "4px"}),
+            html.Div([
+                html.Strong("Change: "),
+                html.Span(
+                    f"{prob_change:+.3f}",
+                    style={"color": "#10b981" if abs(prob_change) < 0.1 else "#ef4444"},
+                ),
+            ]),
+        ])
+        
+        return result
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@app.callback(
+    Output("slider-delta", "value"),
+    Output("slider-theta", "value"),
+    Output("slider-beta", "value"),
+    Output("slider-kurtosis", "value"),
+    Input("reset-perturbation", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reset_perturbation_sliders(n_clicks):
+    """Reset all perturbation sliders to 0."""
+    return 0, 0, 0, 0
 
 
 if __name__ == "__main__":
