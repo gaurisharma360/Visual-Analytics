@@ -27,8 +27,13 @@ try:
     from umap import UMAP
 
     UMAP_AVAILABLE = True
+    UMAP_IMPORT_ERROR = None
 except ImportError:
     UMAP_AVAILABLE = False
+    UMAP_IMPORT_ERROR = "ImportError: install 'umap-learn' in the active environment"
+except Exception as exc:
+    UMAP_AVAILABLE = False
+    UMAP_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 import dash
 from dash import dcc, html
@@ -38,6 +43,21 @@ import plotly.express as px
 
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
 dgrid_runtime_modes = {}
+
+# Canonical runtime keys used across embedding compute + logging.
+DGRID_KEY_UMAP_DATA = "UMAP-DATA"
+DGRID_KEY_UMAP_MODEL = "UMAP-MODEL"
+
+
+def _print_dgrid_status(tag):
+    """Print concise runtime status for data/model embedding transforms."""
+    print(
+        "[DGRID] "
+        f"{tag} | "
+        "backend=internal-soft-spread (dgrid-like concept) | "
+        f"UMAP-DATA={dgrid_runtime_modes.get(DGRID_KEY_UMAP_DATA, 'pending')} | "
+        f"UMAP-MODEL={dgrid_runtime_modes.get(DGRID_KEY_UMAP_MODEL, 'pending')}"
+    )
 
 
 # ==========================================================
@@ -314,21 +334,29 @@ embedding_scaler = StandardScaler()
 X_train_scaled = embedding_scaler.fit_transform(X_train)
 
 if UMAP_AVAILABLE:
-    umap_model = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
-    X_train_umap = umap_model.fit_transform(X_train_scaled)
-    X_train_umap_data_dgrid = apply_dgrid_transform(X_train_umap, embedding_name="UMAP-DATA")
-    X_train_umap_model_dgrid = None
+    try:
+        umap_model = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        X_train_umap = umap_model.fit_transform(X_train_scaled)
+        X_train_umap_data_dgrid = apply_dgrid_transform(X_train_umap, embedding_name=DGRID_KEY_UMAP_DATA)
+        X_train_umap_model_dgrid = None
+        dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "pending-train"
+        print(f"[UMAP][DATA] OK | shape={X_train_umap.shape} | dgrid={dgrid_runtime_modes.get(DGRID_KEY_UMAP_DATA)}")
+    except Exception as exc:
+        X_train_umap = None
+        X_train_umap_data_dgrid = None
+        X_train_umap_model_dgrid = None
+        dgrid_runtime_modes[DGRID_KEY_UMAP_DATA] = "failed"
+        dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "pending-train"
+        print(f"[UMAP][DATA] FAILED | {type(exc).__name__}: {exc}")
 else:
     X_train_umap = None
     X_train_umap_data_dgrid = None
     X_train_umap_model_dgrid = None
-    dgrid_runtime_modes["UMAP"] = "not-available"
+    dgrid_runtime_modes[DGRID_KEY_UMAP_DATA] = "not-available"
+    dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "not-available"
+    print(f"[UMAP][DATA] UNAVAILABLE | {UMAP_IMPORT_ERROR}")
 
-print(
-    "[DGRID] "
-    "backend=internal-soft-spread (dgrid-like concept) | "
-    f"UMAP={dgrid_runtime_modes.get('UMAP', 'not-run')}"
-)
+_print_dgrid_status("pre-init")
 
 
 # ==========================================================
@@ -386,6 +414,12 @@ current_confidence_threshold = default_confidence_threshold
 def compute_model_umap_embedding():
     """Compute a model-space UMAP from signed contributions and confidence terms."""
     if not UMAP_AVAILABLE or model is None:
+        if not UMAP_AVAILABLE:
+            dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "not-available"
+            print(f"[UMAP][MODEL] UNAVAILABLE | {UMAP_IMPORT_ERROR}")
+        else:
+            dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "pending-train"
+            print("[UMAP][MODEL] SKIPPED | model not ready yet")
         return None
 
     try:
@@ -405,9 +439,12 @@ def compute_model_umap_embedding():
 
         umap_model_local = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
         model_coords = umap_model_local.fit_transform(model_repr)
-        return apply_dgrid_transform(model_coords, embedding_name="UMAP-MODEL")
-    except Exception:
-        dgrid_runtime_modes["UMAP-MODEL"] = "failed"
+        transformed = apply_dgrid_transform(model_coords, embedding_name=DGRID_KEY_UMAP_MODEL)
+        print(f"[UMAP][MODEL] OK | shape={model_coords.shape} | dgrid={dgrid_runtime_modes.get(DGRID_KEY_UMAP_MODEL)}")
+        return transformed
+    except Exception as exc:
+        dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "failed"
+        print(f"[UMAP][MODEL] FAILED | {type(exc).__name__}: {exc}")
         return None
 
 
@@ -764,13 +801,17 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
 def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_threshold, sample_filter):
     """Build embedding figure with DGrid transformation and sample filter"""
     if not UMAP_AVAILABLE or X_train_umap_data_dgrid is None:
+        if UMAP_IMPORT_ERROR:
+            umap_msg = f"UMAP unavailable: {UMAP_IMPORT_ERROR}"
+        else:
+            umap_msg = "UMAP not available. Install umap-learn to enable embedding."
         embedding_fig = go.Figure()
         embedding_fig.update_layout(
             template="plotly_white",
             margin=dict(t=20, b=30, l=30, r=20),
             annotations=[
                 dict(
-                    text="UMAP not available. Install umap-learn to enable embedding.",
+                    text=umap_msg,
                     x=0.5,
                     y=0.5,
                     xref="paper",
@@ -1177,6 +1218,7 @@ def build_data_donut():
 
 # Initialize first time
 initialize_active_learning()
+_print_dgrid_status("post-init")
 
 # ==========================================================
 # DASH APP
