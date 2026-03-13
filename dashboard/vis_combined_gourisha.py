@@ -1,7 +1,7 @@
 # ==========================================================
 # COMBINED ACTIVE LEARNING DASHBOARD - FINAL VERSION
 # Base: vis_combined_gourisha.py (with feature explanation)
-# Added: Interactive PCA-to-EEG from vis_combined_gauri.py
+# Added: Interactive embedding-to-EEG from vis_combined_gauri.py
 # ==========================================================
 
 import warnings
@@ -22,7 +22,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.decomposition import PCA
 
 try:
     from umap import UMAP
@@ -42,7 +41,7 @@ dgrid_runtime_modes = {}
 
 
 # ==========================================================
-# DGRID TRANSFORMATION - Prevents overlapping points in PCA
+# DGRID TRANSFORMATION - Prevents overlapping points in embedding views
 # ==========================================================
 
 def _normalize_coords(coords):
@@ -314,23 +313,20 @@ default_confidence_threshold = 0.7
 embedding_scaler = StandardScaler()
 X_train_scaled = embedding_scaler.fit_transform(X_train)
 
-pca_model = PCA(n_components=2, random_state=42)
-X_train_pca = pca_model.fit_transform(X_train_scaled)
-X_train_pca_dgrid = apply_dgrid_transform(X_train_pca, embedding_name="PCA")
-
 if UMAP_AVAILABLE:
     umap_model = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
     X_train_umap = umap_model.fit_transform(X_train_scaled)
-    X_train_umap_dgrid = apply_dgrid_transform(X_train_umap, embedding_name="UMAP")
+    X_train_umap_data_dgrid = apply_dgrid_transform(X_train_umap, embedding_name="UMAP-DATA")
+    X_train_umap_model_dgrid = None
 else:
     X_train_umap = None
-    X_train_umap_dgrid = None
+    X_train_umap_data_dgrid = None
+    X_train_umap_model_dgrid = None
     dgrid_runtime_modes["UMAP"] = "not-available"
 
 print(
     "[DGRID] "
     "backend=internal-soft-spread (dgrid-like concept) | "
-    f"PCA={dgrid_runtime_modes.get('PCA', 'not-run')} | "
     f"UMAP={dgrid_runtime_modes.get('UMAP', 'not-run')}"
 )
 
@@ -387,6 +383,34 @@ pool_auto_count = 0
 current_confidence_threshold = default_confidence_threshold
 
 
+def compute_model_umap_embedding():
+    """Compute a model-space UMAP from signed contributions and confidence terms."""
+    if not UMAP_AVAILABLE or model is None:
+        return None
+
+    try:
+        scaler = model.named_steps["scaler"]
+        clf = model.named_steps["clf"]
+        sample_scaled = scaler.transform(X_train)
+
+        if hasattr(clf, "coef_"):
+            weights = clf.coef_[0]
+            intercept = float(clf.intercept_[0]) if hasattr(clf, "intercept_") else 0.0
+            contributions = sample_scaled * weights
+            logits = sample_scaled @ weights + intercept
+            probs = model.predict_proba(X_train)[:, 1]
+            model_repr = np.column_stack([contributions, logits, probs])
+        else:
+            model_repr = model.predict_proba(X_train)
+
+        umap_model_local = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        model_coords = umap_model_local.fit_transform(model_repr)
+        return apply_dgrid_transform(model_coords, embedding_name="UMAP-MODEL")
+    except Exception:
+        dgrid_runtime_modes["UMAP-MODEL"] = "failed"
+        return None
+
+
 def initialize_active_learning():
     global labeled_idx, unlabeled_idx
     global model, current_batch
@@ -395,7 +419,7 @@ def initialize_active_learning():
     global train_history, test_history, round_history
     global sensitivity_history, specificity_history
     global initial_labeled_idx, oracle_annotated_idx
-    global current_confidence_threshold
+    global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
 
     train_history = []
@@ -423,6 +447,8 @@ def initialize_active_learning():
         y_train[labeled_idx],
         subjects_train[labeled_idx],
     )
+
+    X_train_umap_model_dgrid = compute_model_umap_embedding()
 
     current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
     annotation_queue = []
@@ -735,19 +761,35 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
     return fig
 
 
-def build_embedding_figure(pca_view_mode, embedding_method, confidence_threshold, sample_filter):
+def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_threshold, sample_filter):
     """Build embedding figure with DGrid transformation and sample filter"""
-    if embedding_method == "umap" and UMAP_AVAILABLE and X_train_umap_dgrid is not None:
-        embedding_coords = X_train_umap_dgrid
-        embedding_type = "UMAP"
-        coord_labels = {"x": "UMAP 1", "y": "UMAP 2"}
+    if not UMAP_AVAILABLE or X_train_umap_data_dgrid is None:
+        embedding_fig = go.Figure()
+        embedding_fig.update_layout(
+            template="plotly_white",
+            margin=dict(t=20, b=30, l=30, r=20),
+            annotations=[
+                dict(
+                    text="UMAP not available. Install umap-learn to enable embedding.",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                    font=dict(size=13, color="#64748b"),
+                )
+            ],
+        )
+        return embedding_fig, "UMAP"
+
+    if embedding_space_mode == "model" and X_train_umap_model_dgrid is not None:
+        embedding_coords = X_train_umap_model_dgrid
+        embedding_type = "UMAP Model"
+        coord_labels = {"x": "Model UMAP 1", "y": "Model UMAP 2"}
     else:
-        embedding_coords = X_train_pca_dgrid
-        embedding_type = "PCA"
-        coord_labels = {
-            "x": f"PC1 ({pca_model.explained_variance_ratio_[0]:.1%} var)",
-            "y": f"PC2 ({pca_model.explained_variance_ratio_[1]:.1%} var)",
-        }
+        embedding_coords = X_train_umap_data_dgrid
+        embedding_type = "UMAP Data"
+        coord_labels = {"x": "Data UMAP 1", "y": "Data UMAP 2"}
 
     sample_status = np.array(["Unlabeled"] * len(X_train))
     sample_status[labeled_idx] = "Labeled"
@@ -1417,19 +1459,22 @@ app.layout = html.Div([
         "marginBottom": "6px",
     }),
 
-    # Main workspace - top row: PCA + Uncertainty + Feature Explanation, bottom row: EEG + Analytics
+    # Main workspace - top row: UMAP + Uncertainty + Feature Explanation, bottom row: EEG + Analytics
     html.Div([
         html.Div([
             html.Div([
-                html.H3(id="embedding-title", children="PCA Embedding View",
+                html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 dcc.Graph(id="pca-embedding", style={"height": "calc(100% - 55px)", "minHeight": "240px"},
                           config={'responsive': True, 'displayModeBar': False}),
                 html.Div([
                     dcc.RadioItems(
-                        id="embedding-method",
-                        options=[{"label": " PCA", "value": "pca"}] + ([{"label": " UMAP", "value": "umap"}] if UMAP_AVAILABLE else []),
-                        value="pca",
+                        id="embedding-space-mode",
+                        options=[
+                            {"label": " Data UMAP", "value": "data"},
+                            {"label": " Model UMAP", "value": "model"},
+                        ],
+                        value="data",
                         inline=True,
                         style={"fontSize": "9px", "marginRight": "8px"},
                     ),
@@ -1595,7 +1640,7 @@ app.layout = html.Div([
 
 
 # ==========================================================
-# MAIN CALLBACK - Enhanced with PCA click interaction
+# MAIN CALLBACK - Enhanced with embedding click interaction
 # ==========================================================
 
 @app.callback(
@@ -1620,9 +1665,9 @@ app.layout = html.Div([
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
     Input("reset-btn", "n_clicks"),
+    Input("embedding-space-mode", "value"),
     Input("pca-view-mode", "value"),
-    Input("embedding-method", "value"),
-    Input("pca-embedding", "clickData"),  # NEW: Capture PCA clicks
+    Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("add-to-batch-btn", "n_clicks"),  # NEW: Add to queue button
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
@@ -1635,8 +1680,8 @@ def update_dashboard(
         train_clicks,
         confidence_value,
         reset_clicks,
+        embedding_space_mode,
         pca_view_mode,
-        embedding_method,
         embedding_click_data,  # NEW
         add_to_batch_clicks,  # NEW
         load_uncertain_clicks,  # NEW
@@ -1647,6 +1692,7 @@ def update_dashboard(
     global current_batch, current_pointer
     global batch_auto_count, pool_auto_count
     global model, phase, round_number
+    global X_train_umap_model_dgrid
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
 
@@ -1658,15 +1704,15 @@ def update_dashboard(
 
     status_message = "Annotation Phase"
 
-    # NEW: Handle PCA embedding click
+    # Handle embedding click
     if trigger_id == "pca-embedding" and embedding_click_data:
         selected_sample_id = int(embedding_click_data["points"][0]["customdata"][0])
-        status_message = f"Previewing Sample {selected_sample_id} from PCA (click 'Add to Annotation Batch')"
+        status_message = f"Previewing Sample {selected_sample_id} from UMAP (click 'Add to Annotation Batch')"
 
     # NEW: Handle add to batch button
     if trigger_id == "add-to-batch-btn":
         if selected_sample_id is None:
-            status_message = "No sample selected from embedding. Click a point in PCA first."
+            status_message = "No sample selected from embedding. Click a point in UMAP first."
         elif selected_sample_id in labeled_idx:
             status_message = f"Sample {selected_sample_id} is already labeled"
         elif selected_sample_id in annotation_queue:
@@ -1724,6 +1770,8 @@ def update_dashboard(
             subjects_train[labeled_idx],
         )
 
+        X_train_umap_model_dgrid = compute_model_umap_embedding()
+
         # Compute metrics BEFORE setting phase back to annotation
         train_acc_new = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
         test_pred_new = model.predict(X_test)
@@ -1747,7 +1795,7 @@ def update_dashboard(
         phase = "annotation"
         current_confidence_threshold = confidence_value
         selected_sample_id = None
-        status_message = "Model trained! Load Top-K uncertain or click PCA to select samples."
+        status_message = "Model trained! Load Top-K uncertain or click UMAP to select samples."
 
     # Always compute current metrics for display
     train_acc = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
@@ -1877,7 +1925,7 @@ def update_dashboard(
     train_disabled = phase != "training"
 
     if pending_queue == 0 and phase == "annotation" and len(annotation_queue) == 0:
-        status_message = "Queue empty. Load Top-K uncertain or click PCA and add samples."
+        status_message = "Queue empty. Load Top-K uncertain or click UMAP and add samples."
 
     if trigger_id in [None, "url", "reset-btn"]:
         pending_queue = max(0, len(annotation_queue) - current_pointer)
@@ -1890,7 +1938,7 @@ def update_dashboard(
 
     embedding_fig, embedding_type = build_embedding_figure(
         pca_view_mode,
-        embedding_method,
+        embedding_space_mode,
         current_confidence_threshold,
         sample_filter,
     )
@@ -2042,7 +2090,8 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
         result = html.Div([
             html.Div([
                 html.Strong("Original: "),
-                html.Span(f"{original_pred} ({original_probs[1]:.3f})"),
+                html.Span(f"{original_pred} ({original_probs[1]:.3f})",
+                          style={"color": "#ef4444" if original_pred != perturbed_pred else "#0f172a"}),
             ], style={"marginBottom": "4px"}),
             html.Div([
                 html.Strong("Perturbed: "),
@@ -2084,7 +2133,7 @@ if __name__ == "__main__":
     print("COMBINED DASHBOARD - FINAL VERSION")
     print("=" * 70)
     print("[OK] Feature Explanation System (from vis_combined_gourisha.py)")
-    print("[OK] Interactive PCA-to-EEG (from vis_combined_gauri.py)")
+    print("[OK] Interactive UMAP-to-EEG (from vis_combined_gauri.py)")
     print("[OK] Annotation Queue System")
     print("[OK] Load Top-K Uncertain Button")
     print("[OK] Add to Annotation Batch Button")
@@ -2094,7 +2143,7 @@ if __name__ == "__main__":
     print("Opening dashboard at http://127.0.0.1:8050")
     print("=" * 70)
     print("\nHow to use:")
-    print("1. Click any point in the PCA embedding")
+    print("1. Click any point in the UMAP embedding")
     print("2. Click 'Add to Annotation Batch' to queue it")
     print("3. Or click 'Load Top-K Uncertain' to auto-load uncertain samples")
     print("4. Click 'Annotate (Oracle)' to label queued samples")
@@ -2102,15 +2151,4 @@ if __name__ == "__main__":
     print("=" * 70 + "\n")
 
     app.run(debug=True)
-
-
-
-
-
-
-
-
-
-
-
 
