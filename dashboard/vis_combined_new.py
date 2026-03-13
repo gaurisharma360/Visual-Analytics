@@ -1,5 +1,5 @@
 # ==========================================================
-# COMBINED ACTIVE LEARNING DASHBOARD - FINAL VERSION
+# COMBINED ACTIVE LEARNING DASHBOARD - FINAL VERSION-
 # Base: vis_combined_gourisha.py (with feature explanation)
 # Added: Interactive PCA-to-EEG from vis_combined_gauri.py
 # ==========================================================
@@ -232,7 +232,7 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
 # ==========================================================
 
 def load_and_split():
-    df = pd.read_csv("C:/Users/Gourisha Verma/Visual-Analytics/bonn_eeg_combined.csv")
+    df = pd.read_csv("./bonn_eeg_combined.csv")
 
     X_raw = df.drop(["ID", "Y"], axis=1).values
     y_original = df["Y"].values
