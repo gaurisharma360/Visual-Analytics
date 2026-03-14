@@ -578,7 +578,7 @@ def build_confusion_heatmap(cm):
             title_standoff=10,
         ),
         width=None,
-        height=350,
+        height=260,
     )
     return fig
 
@@ -712,7 +712,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
             xaxis_title="← Non-Seizure  |  Seizure →",
             yaxis_title="",
             template="plotly_white",
-            height=320,
+            height=260,
             margin=dict(l=120, r=14, t=10, b=44),
             showlegend=False,
         )
@@ -768,7 +768,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
             xaxis_title="Contribution",
             yaxis_title="",
             template="plotly_white",
-            height=320,
+            height=260,
             margin=dict(l=120, r=14, t=14, b=44),
             barmode='relative',
             legend=dict(
@@ -1158,14 +1158,16 @@ def build_uncertainty_histogram(confidence_threshold):
         barmode="stack",
         bargap=0.1,
         template="plotly_white",
-        margin=dict(t=18, b=48, l=50, r=130),
+        margin=dict(t=24, b=102, l=50, r=16),
         legend=dict(
-            orientation="v",
+            orientation="h",
             yanchor="top",
-            y=1.0,
-            xanchor="left",
-            x=1.02,
+            y=-0.28,
+            xanchor="center",
+            x=0.5,
             font=dict(size=8),
+            entrywidth=62,
+            entrywidthmode="pixels",
             bgcolor="rgba(255,255,255,0.85)",
             bordercolor="#e2e8f0",
             borderwidth=1,
@@ -1269,9 +1271,9 @@ app.index_string = '''
 
             /* Base responsive styles */
             @media (max-width: 1400px) {
-                .main-workspace { flex-direction: column !important; }
+                .workspace-grid { grid-template-columns: 1fr !important; }
                 .left-column, .right-column { width: 100% !important; min-width: 0 !important; max-width: none !important; margin-left: 0 !important; }
-                .top-row, .bottom-row { flex-direction: column !important; }
+                .right-row1 { grid-template-columns: 1fr 1fr !important; }
                 .viz-panel { width: 100% !important; min-width: 0 !important; margin-left: 0 !important; margin-bottom: 10px; }
                 .kpi-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 4px !important; }
                 .button-group { flex-wrap: wrap; gap: 4px; }
@@ -1279,13 +1281,14 @@ app.index_string = '''
             }
 
             @media (max-width: 1024px) {
+                .right-row1 { grid-template-columns: 1fr !important; }
                 .top-bar { flex-direction: column !important; align-items: flex-start !important; gap: 8px; }
                 .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 3px !important; font-size: 11px !important; }
                 .kpi-grid span { font-size: 11px !important; }
                 .control-row { flex-direction: column !important; gap: 4px; }
                 .viz-panel h3 { font-size: 13px !important; }
                 .radio-controls label { font-size: 10px !important; }
-                .main-workspace { overflow-y: auto !important; }
+                .workspace-grid { overflow-y: auto !important; }
             }
 
             @media (max-width: 768px) {
@@ -1501,13 +1504,13 @@ app.layout = html.Div([
         "marginBottom": "6px",
     }),
 
-    # Main workspace - top row: UMAP + Uncertainty + Feature Explanation, bottom row: EEG + Analytics
+    # Main workspace - left: embedding + annotation; right: (uncertainty + confusion), learning, feature explanation
     html.Div([
         html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="pca-embedding", style={"height": "calc(100% - 55px)", "minHeight": "240px"},
+                dcc.Graph(id="pca-embedding", style={"height": "calc(100% - 55px)", "minHeight": "260px"},
                           config={'responsive': True, 'displayModeBar': False}),
                 html.Div([
                     dcc.RadioItems(
@@ -1544,8 +1547,9 @@ app.layout = html.Div([
                     ),
                 ], className="radio-controls control-row", style={"display": "flex", "gap": "4px", "flexWrap": "wrap", "paddingTop": "2px"}),
             ], style={
-                "flex": "2 1 520px",
+                "flex": "1 1 0",
                 "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
@@ -1553,25 +1557,89 @@ app.layout = html.Div([
                 "display": "flex",
                 "flexDirection": "column",
             }, className="viz-panel"),
+
             html.Div([
-                html.H3("Uncertainty", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="uncertainty-histogram", style={"height": "calc(100% - 28px)", "minHeight": "240px"}, config={'responsive': True}),
+                html.H3("Annotation Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "340px"}, config={'responsive': True, 'displayModeBar': False}),
             ], style={
-                "flex": "1 1 320px",
+                "flex": "1 1 0",
                 "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
-                "padding": "5px",
+                "padding": "4px",
                 "display": "flex",
                 "flexDirection": "column",
             }, className="viz-panel"),
+        ], className="left-column", style={
+            "display": "flex",
+            "flexDirection": "column",
+            "gap": "4px",
+            "minWidth": "0",
+            "minHeight": "0",
+            "height": "100%",
+        }),
+
+        html.Div([
             html.Div([
-                html.H3("Feature Explanation", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                html.Div([
+                    html.H3("Uncertainty", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                    dcc.Graph(id="uncertainty-histogram", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
+                ], style={
+                    "minWidth": "0",
+                    "minHeight": "0",
+                    "backgroundColor": "#ffffff",
+                    "border": "1px solid #e2e8f0",
+                    "borderRadius": "8px",
+                    "padding": "5px",
+                    "display": "flex",
+                    "flexDirection": "column",
+                }, className="viz-panel"),
+
+                html.Div([
+                    html.H3("Confusion Matrix", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                    dcc.Graph(id="confusion-heatmap", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
+                ], style={
+                    "minWidth": "0",
+                    "minHeight": "0",
+                    "backgroundColor": "#ffffff",
+                    "border": "1px solid #e2e8f0",
+                    "borderRadius": "8px",
+                    "padding": "5px",
+                    "display": "flex",
+                    "flexDirection": "column",
+                }, className="viz-panel"),
+            ], className="right-row1", style={
+                "display": "grid",
+                "gridTemplateColumns": "1.35fr 0.65fr",
+                "gap": "4px",
+                "alignItems": "stretch",
+                "minHeight": "0",
+                "flex": "1 1 0",
+            }),
+
+            html.Div([
+                html.H3("Learning", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="learning-curve", style={"height": "calc(100% - 22px)", "minHeight": "260px"}, config={'responsive': True}),
+            ], style={
+                "flex": "1 1 0",
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "4px",
+                "display": "flex",
+                "flexDirection": "column",
+            }, className="viz-panel"),
+
+            html.Div([
+                html.H3("Feature Importance", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 html.P("Contribution view", style={"fontSize": "9px", "color": "#64748b", "margin": "0 0 4px 0"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"height": "calc(100% - 46px)", "minHeight": "240px"},
+                    style={"height": "calc(100% - 46px)", "minHeight": "260px"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
@@ -1579,8 +1647,9 @@ app.layout = html.Div([
                     },
                 ),
             ], style={
-                "flex": "1 1 320px",
+                "flex": "1 1 0",
                 "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
@@ -1588,70 +1657,23 @@ app.layout = html.Div([
                 "display": "flex",
                 "flexDirection": "column",
             }, className="viz-panel"),
-        ], className="top-row", style={
+        ], className="right-column", style={
             "display": "flex",
+            "flexDirection": "column",
             "gap": "4px",
-            "flex": "1 1 0",
-            "minHeight": "300px",
-            "marginBottom": "4px",
-            "flexWrap": "wrap",
+            "minWidth": "0",
+            "minHeight": "0",
+            "height": "100%",
         }),
-
-        html.Div([
-            html.Div([
-                html.H3("EEG Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "220px"}, config={'responsive': True, 'displayModeBar': False}),
-            ], style={
-                "flex": "2 1 540px",
-                "minWidth": "0",
-                "backgroundColor": "#ffffff",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "8px",
-                "padding": "4px",
-                "display": "flex",
-                "flexDirection": "column",
-            }, className="viz-panel"),
-            html.Div([
-                html.H3("Analytics", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Tabs(
-                    id="analytics-tabs",
-                    value="tab-learning",
-                    children=[
-                        dcc.Tab(label="Learning", value="tab-learning",
-                                children=[html.Div([dcc.Graph(id="learning-curve", style={"height": "260px"}, config={'responsive': True})], style={"padding": "6px"})],
-                                style={"padding": "4px", "fontSize": "9px"},
-                                selected_style={"padding": "4px", "fontSize": "9px", "fontWeight": "700"}),
-                        dcc.Tab(label="Confusion", value="tab-confusion",
-                                children=[html.Div([dcc.Graph(id="confusion-heatmap", style={"height": "260px"}, config={'responsive': True})], style={"padding": "6px"})],
-                                style={"padding": "4px", "fontSize": "9px"},
-                                selected_style={"padding": "4px", "fontSize": "9px", "fontWeight": "700"}),
-                    ],
-                ),
-            ], style={
-                "flex": "1 1 320px",
-                "minWidth": "0",
-                "backgroundColor": "#ffffff",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "8px",
-                "padding": "4px",
-                "display": "flex",
-                "flexDirection": "column",
-            }, className="viz-panel"),
-        ], className="bottom-row", style={
-            "display": "flex",
-            "gap": "4px",
-            "flex": "1 1 0",
-            "minHeight": "280px",
-            "flexWrap": "wrap",
-        }),
-    ], className="main-workspace", style={
-        "display": "flex",
-        "flexDirection": "column",
+    ], className="main-workspace workspace-grid", style={
+        "display": "grid",
+        "gridTemplateColumns": "1.2fr 1fr",
         "gap": "4px",
         "flex": "1 1 auto",
         "minHeight": "0",
         "height": "100%",
-        "overflow": "auto",
+        "overflow": "hidden",
+        "alignItems": "stretch",
     }),
 
     # Hidden perturbation mount to keep callback IDs available without showing the panel.
