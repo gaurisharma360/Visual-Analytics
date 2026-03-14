@@ -253,7 +253,7 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
 # ==========================================================
 
 def load_and_split():
-    df = pd.read_csv("C:/Users/Gourisha Verma/Visual-Analytics/bonn_eeg_combined.csv")
+    df = pd.read_csv("./bonn_eeg_combined.csv")
 
     X_raw = df.drop(["ID", "Y"], axis=1).values
     y_original = df["Y"].values
