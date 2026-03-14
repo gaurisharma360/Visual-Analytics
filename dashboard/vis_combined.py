@@ -339,14 +339,25 @@ default_confidence_threshold = 0.7
 
 embedding_scaler = StandardScaler()
 X_train_scaled = embedding_scaler.fit_transform(X_train)
+model_umap = None
 
 if UMAP_AVAILABLE:
     try:
         umap_model = UMAP(
             n_components=2,
-            random_state=GLOBAL_RANDOM_SEED,
             n_neighbors=15,
             min_dist=0.1,
+            init="spectral",
+            metric="euclidean",
+            random_state=GLOBAL_RANDOM_SEED,
+        )
+        model_umap = UMAP(
+            n_components=2,
+            n_neighbors=15,
+            min_dist=0.1,
+            init="spectral",
+            metric="euclidean",
+            random_state=GLOBAL_RANDOM_SEED,
         )
         X_train_umap = umap_model.fit_transform(X_train_scaled)
         X_train_umap_data_dgrid = apply_dgrid_transform(X_train_umap, embedding_name=DGRID_KEY_UMAP_DATA)
@@ -357,6 +368,7 @@ if UMAP_AVAILABLE:
         X_train_umap = None
         X_train_umap_data_dgrid = None
         X_train_umap_model_dgrid = None
+        model_umap = None
         dgrid_runtime_modes[DGRID_KEY_UMAP_DATA] = "failed"
         dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "pending-train"
         print(f"[UMAP][DATA] FAILED | {type(exc).__name__}: {exc}")
@@ -364,6 +376,7 @@ else:
     X_train_umap = None
     X_train_umap_data_dgrid = None
     X_train_umap_model_dgrid = None
+    model_umap = None
     dgrid_runtime_modes[DGRID_KEY_UMAP_DATA] = "not-available"
     dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "not-available"
     print(f"[UMAP][DATA] UNAVAILABLE | {UMAP_IMPORT_ERROR}")
@@ -433,6 +446,8 @@ stability_required_rounds = 2
 
 def compute_model_umap_embedding():
     """Compute a model-space UMAP from signed contributions and confidence terms."""
+    global model_umap
+
     if not UMAP_AVAILABLE or model is None:
         if not UMAP_AVAILABLE:
             dgrid_runtime_modes[DGRID_KEY_UMAP_MODEL] = "not-available"
@@ -457,13 +472,17 @@ def compute_model_umap_embedding():
         else:
             model_repr = model.predict_proba(X_train)
 
-        umap_model_local = UMAP(
-            n_components=2,
-            random_state=GLOBAL_RANDOM_SEED,
-            n_neighbors=15,
-            min_dist=0.1,
-        )
-        model_coords = umap_model_local.fit_transform(model_repr)
+        if model_umap is None:
+            model_umap = UMAP(
+                n_components=2,
+                n_neighbors=15,
+                min_dist=0.1,
+                init="spectral",
+                metric="euclidean",
+                random_state=GLOBAL_RANDOM_SEED,
+            )
+
+        model_coords = model_umap.fit_transform(model_repr)
         transformed = apply_dgrid_transform(model_coords, embedding_name=DGRID_KEY_UMAP_MODEL)
         print(f"[UMAP][MODEL] OK | shape={model_coords.shape} | dgrid={dgrid_runtime_modes.get(DGRID_KEY_UMAP_MODEL)}")
         return transformed
@@ -1531,7 +1550,7 @@ app.layout = html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 dcc.Graph(id="pca-embedding", style={"height": "calc(100% - 55px)", "minHeight": "260px"},
-                          config={'responsive': True, 'displayModeBar': False}),
+                      config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
                     dcc.RadioItems(
                         id="embedding-space-mode",
@@ -1580,7 +1599,7 @@ app.layout = html.Div([
 
             html.Div([
                 html.H3("Annotation Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "340px"}, config={'responsive': True, 'displayModeBar': False}),
+                dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "340px"}, config={'responsive': True, 'displayModeBar': 'hover'}),
             ], style={
                 "flex": "1 1 0",
                 "minWidth": "0",
