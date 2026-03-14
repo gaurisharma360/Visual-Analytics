@@ -41,6 +41,13 @@ from dash.dependencies import Input, Output, State
 import plotly.graph_objs as go
 import plotly.express as px
 
+# ==========================================================
+# GLOBAL RANDOM SEED
+# ==========================================================
+
+GLOBAL_RANDOM_SEED = 42
+np.random.seed(GLOBAL_RANDOM_SEED)
+
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
 dgrid_runtime_modes = {}
 
@@ -270,7 +277,7 @@ def load_and_split():
 
     subjects = np.array(subjects)
 
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=GLOBAL_RANDOM_SEED)
     train_idx, test_idx = next(gss.split(X, y, groups=subjects))
 
     return (
@@ -293,7 +300,7 @@ def train_model(X_train, y_train, subjects_train):
         ("clf", LogisticRegression(
             solver="saga",
             max_iter=10000,
-            random_state=42
+            random_state=GLOBAL_RANDOM_SEED
         ))
     ])
 
@@ -335,7 +342,12 @@ X_train_scaled = embedding_scaler.fit_transform(X_train)
 
 if UMAP_AVAILABLE:
     try:
-        umap_model = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        umap_model = UMAP(
+            n_components=2,
+            random_state=GLOBAL_RANDOM_SEED,
+            n_neighbors=15,
+            min_dist=0.1,
+        )
         X_train_umap = umap_model.fit_transform(X_train_scaled)
         X_train_umap_data_dgrid = apply_dgrid_transform(X_train_umap, embedding_name=DGRID_KEY_UMAP_DATA)
         X_train_umap_model_dgrid = None
@@ -409,6 +421,14 @@ current_batch = np.array([])
 batch_auto_count = 0
 pool_auto_count = 0
 current_confidence_threshold = default_confidence_threshold
+annotations_this_round = 0
+previous_predictions = None
+stable_rounds = 0
+stop_active_learning = False
+
+# Stop when prediction flips stay below this ratio and no doctor samples are needed.
+stability_flip_ratio_threshold = 0.01
+stability_required_rounds = 2
 
 
 def compute_model_umap_embedding():
@@ -437,7 +457,12 @@ def compute_model_umap_embedding():
         else:
             model_repr = model.predict_proba(X_train)
 
-        umap_model_local = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        umap_model_local = UMAP(
+            n_components=2,
+            random_state=GLOBAL_RANDOM_SEED,
+            n_neighbors=15,
+            min_dist=0.1,
+        )
         model_coords = umap_model_local.fit_transform(model_repr)
         transformed = apply_dgrid_transform(model_coords, embedding_name=DGRID_KEY_UMAP_MODEL)
         print(f"[UMAP][MODEL] OK | shape={model_coords.shape} | dgrid={dgrid_runtime_modes.get(DGRID_KEY_UMAP_MODEL)}")
@@ -458,6 +483,8 @@ def initialize_active_learning():
     global initial_labeled_idx, oracle_annotated_idx
     global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
+    global annotations_this_round
+    global previous_predictions, stable_rounds, stop_active_learning
 
     train_history = []
     test_history = []
@@ -466,7 +493,8 @@ def initialize_active_learning():
     specificity_history = []
 
     n_initial = int(initial_fraction * len(X_train))
-    indices = np.random.permutation(len(X_train))
+    rng = np.random.default_rng(GLOBAL_RANDOM_SEED)
+    indices = rng.permutation(len(X_train))
 
     labeled_idx = indices[:n_initial]
     unlabeled_idx = indices[n_initial:]
@@ -491,6 +519,10 @@ def initialize_active_learning():
     annotation_queue = []
     current_pointer = 0
     selected_sample_id = None
+    annotations_this_round = 0
+    previous_predictions = model.predict(X_train)
+    stable_rounds = 0
+    stop_active_learning = False
 
 
 def build_learning_curve():
@@ -629,7 +661,11 @@ def _build_embedding_boundary_trace(embedding_coords):
         np.linspace(y_min - y_pad, y_max + y_pad, 120),
     )
 
-    boundary_model = LogisticRegression(solver="lbfgs", max_iter=1000, random_state=42)
+    boundary_model = LogisticRegression(
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=GLOBAL_RANDOM_SEED,
+    )
     boundary_model.fit(embedding_coords, y_train)
     zz = boundary_model.predict_proba(np.c_[xx.ravel(), yy.ravel()])[:, 1].reshape(xx.shape)
 
@@ -1418,22 +1454,6 @@ app.layout = html.Div([
                     "whiteSpace": "nowrap",
                 },
             ),
-            html.Button(
-                "Add to Annotation Batch",
-                id="add-to-batch-btn",
-                style={
-                    "marginLeft": "8px",
-                    "backgroundColor": "#b45309",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "padding": "8px 12px",
-                    "fontWeight": "600",
-                    "cursor": "pointer",
-                    "fontSize": "clamp(10px, 1.2vw, 13px)",
-                    "whiteSpace": "nowrap",
-                },
-            ),
         ], className="button-group", style={"display": "flex", "flexWrap": "wrap", "gap": "6px"}),
     ], className="top-bar", style={
         "display": "flex",
@@ -1732,7 +1752,6 @@ app.layout = html.Div([
     Input("embedding-space-mode", "value"),
     Input("pca-view-mode", "value"),
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
-    Input("add-to-batch-btn", "n_clicks"),  # NEW: Add to queue button
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
     State("selected-feature-store", "data"),
@@ -1747,7 +1766,6 @@ def update_dashboard(
         embedding_space_mode,
         pca_view_mode,
         embedding_click_data,  # NEW
-        add_to_batch_clicks,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
         selected_feature,
@@ -1759,6 +1777,8 @@ def update_dashboard(
     global X_train_umap_model_dgrid
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
+    global annotations_this_round
+    global previous_predictions, stable_rounds, stop_active_learning
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -1768,36 +1788,45 @@ def update_dashboard(
 
     status_message = "Annotation Phase"
 
+    if stop_active_learning and trigger_id not in ["url", "reset-btn"]:
+        status_message = (
+            "Stopping criterion met: predictions stable and no uncertain samples. "
+            "Reset to start a new run."
+        )
+
     # Handle embedding click
     if trigger_id == "pca-embedding" and embedding_click_data:
         selected_sample_id = int(embedding_click_data["points"][0]["customdata"][0])
-        status_message = f"Previewing Sample {selected_sample_id} from UMAP (click 'Add to Annotation Batch')"
-
-    # NEW: Handle add to batch button
-    if trigger_id == "add-to-batch-btn":
-        if selected_sample_id is None:
-            status_message = "No sample selected from embedding. Click a point in UMAP first."
-        elif selected_sample_id in labeled_idx:
-            status_message = f"Sample {selected_sample_id} is already labeled"
-        elif selected_sample_id in annotation_queue:
-            status_message = f"Sample {selected_sample_id} already in queue"
-        elif len(annotation_queue) >= batch_size:
-            status_message = f"Annotation queue full ({batch_size}/{batch_size})"
-        else:
-            annotation_queue.append(selected_sample_id)
-            status_message = f"Added Sample {selected_sample_id} to queue ({len(annotation_queue)}/{batch_size})"
-            if phase != "annotation":
-                phase = "annotation"
-                current_pointer = 0
+        status_message = f"Sample {selected_sample_id} selected. Click 'Annotate (Oracle)' to label it."
 
     # NEW: Handle load top-K uncertain button
     if trigger_id == "load-uncertain-btn":
-        current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
-        annotation_queue = list(current_batch[:batch_size])
-        current_pointer = 0
-        phase = "annotation"
-        selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else selected_sample_id
-        status_message = f"Loaded Top-{batch_size} uncertain samples to queue"
+        if stop_active_learning:
+            status_message = "Active learning has converged. Click Reset to run again."
+        else:
+            current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
+
+            if len(unlabeled_idx) == 0:
+                annotation_queue = []
+                current_pointer = 0
+                selected_sample_id = None
+                status_message = "No unlabeled samples left to load."
+            else:
+                # Always load top-K uncertain unlabeled samples while not converged.
+                probs_unlabeled = model.predict_proba(X_train[unlabeled_idx])
+                uncertainty_unlabeled = 1 - np.max(probs_unlabeled, axis=1)
+                sorted_idx = np.argsort(uncertainty_unlabeled)[::-1]
+                k = min(batch_size, len(unlabeled_idx))
+                top_k_unlabeled = unlabeled_idx[sorted_idx[:k]]
+
+                annotation_queue = [int(idx) for idx in top_k_unlabeled]
+                current_pointer = 0
+                phase = "annotation"
+                selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else None
+                status_message = (
+                    f"Loaded Top-{k} uncertain samples to queue "
+                    f"(doctor-needed in top-K: {len(current_batch)})."
+                )
 
     if trigger_id == "confidence-slider":
         current_confidence_threshold = confidence_value
@@ -1809,57 +1838,116 @@ def update_dashboard(
 
     # NEW: Modified annotate logic to work with queue
     if trigger_id == "annotate-btn" and phase == "annotation":
-        if len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
+        if stop_active_learning:
+            status_message = "Active learning has converged. Click Reset to run again."
+
+        if annotations_this_round >= batch_size:
+            phase = "training"
+            status_message = f"Reached {batch_size} annotations. Please click Train Model."
+
+        # If queue is empty, annotate the selected UMAP sample directly.
+        elif len(annotation_queue) == 0:
+            if selected_sample_id is None:
+                status_message = "No sample selected. Click a UMAP point or load Top-K uncertain first."
+            elif selected_sample_id in labeled_idx:
+                status_message = f"Sample {selected_sample_id} is already labeled"
+            else:
+                annotation_queue.append(int(selected_sample_id))
+
+        if (
+            not stop_active_learning
+            and phase == "annotation"
+            and len(annotation_queue) > 0
+            and current_pointer < len(annotation_queue)
+        ):
             sample_id = int(annotation_queue.pop(current_pointer))
             if sample_id in unlabeled_idx:
                 labeled_idx = np.append(labeled_idx, sample_id)
                 unlabeled_idx = unlabeled_idx[unlabeled_idx != sample_id]
                 oracle_annotated_idx = np.append(oracle_annotated_idx, sample_id)
+                annotations_this_round += 1
 
             current_pointer = 0
-            if len(annotation_queue) > 0:
+
+            if annotations_this_round >= batch_size:
+                annotation_queue = []
+                selected_sample_id = None
+                phase = "training"
+                status_message = f"Reached {batch_size}/{batch_size} annotations. Please Train the Model."
+            elif len(annotation_queue) > 0:
                 selected_sample_id = int(annotation_queue[current_pointer])
                 status_message = f"Annotated! Next sample in queue: {selected_sample_id}"
             else:
                 selected_sample_id = None
-                phase = "training"
-                status_message = "Queue complete. Please Train the Model."
+                status_message = f"Annotated ({annotations_this_round}/{batch_size}). Select next sample or load Top-K uncertain."
 
-    if trigger_id == "train-btn" and phase == "training":
-        round_number += 1
+    if trigger_id == "train-btn" and (phase == "training" or annotations_this_round > 0):
+        if stop_active_learning:
+            status_message = "Active learning already converged. Click Reset to run again."
+        else:
+            round_number += 1
 
-        model = train_model(
-            X_train[labeled_idx],
-            y_train[labeled_idx],
-            subjects_train[labeled_idx],
-        )
+            model = train_model(
+                X_train[labeled_idx],
+                y_train[labeled_idx],
+                subjects_train[labeled_idx],
+            )
 
-        X_train_umap_model_dgrid = compute_model_umap_embedding()
+            X_train_umap_model_dgrid = compute_model_umap_embedding()
 
-        # Compute metrics BEFORE setting phase back to annotation
-        train_acc_new = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
-        test_pred_new = model.predict(X_test)
-        test_acc_new = accuracy_score(y_test, test_pred_new)
-        cm_new = confusion_matrix(y_test, test_pred_new)
-        tn, fp, fn, tp = cm_new.ravel()
-        sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
-        specificity_new = tn / (tn + fp) if (tn + fp) else 0
+            # Compute metrics BEFORE setting phase back to annotation
+            train_acc_new = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
+            test_pred_new = model.predict(X_test)
+            test_acc_new = accuracy_score(y_test, test_pred_new)
+            cm_new = confusion_matrix(y_test, test_pred_new)
+            tn, fp, fn, tp = cm_new.ravel()
+            sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
+            specificity_new = tn / (tn + fp) if (tn + fp) else 0
 
-        # Record history for this round
-        train_history.append(train_acc_new)
-        test_history.append(test_acc_new)
-        sensitivity_history.append(sensitivity_new)
-        specificity_history.append(specificity_new)
-        round_history.append(round_number)
+            # Record history for this round
+            train_history.append(train_acc_new)
+            test_history.append(test_acc_new)
+            sensitivity_history.append(sensitivity_new)
+            specificity_history.append(specificity_new)
+            round_history.append(round_number)
 
-        # Now reset for next round
-        current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_value)
-        annotation_queue = []
-        current_pointer = 0
-        phase = "annotation"
-        current_confidence_threshold = confidence_value
-        selected_sample_id = None
-        status_message = "Model trained! Load Top-K uncertain or click UMAP to select samples."
+            # Now reset for next round
+            current_batch, batch_auto_count, pool_auto_count = compute_batch(confidence_value)
+            annotation_queue = []
+            current_pointer = 0
+            current_confidence_threshold = confidence_value
+            selected_sample_id = None
+            annotations_this_round = 0
+
+            # Hybrid stopping: no uncertain doctor samples + stable predictions.
+            current_predictions = model.predict(X_train)
+            flips = 0
+            flip_ratio = 0.0
+            if previous_predictions is not None:
+                flips = int(np.sum(current_predictions != previous_predictions))
+                flip_ratio = flips / float(len(current_predictions))
+
+            if len(current_batch) == 0 and flip_ratio < stability_flip_ratio_threshold:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+
+            previous_predictions = current_predictions.copy()
+
+            if stable_rounds >= stability_required_rounds and len(current_batch) == 0:
+                stop_active_learning = True
+                phase = "stopped"
+                status_message = (
+                    "Stopping criterion met: no uncertain samples and stable predictions "
+                    f"for {stable_rounds} rounds (flip ratio {flip_ratio:.3f})."
+                )
+            else:
+                phase = "annotation"
+                status_message = (
+                    "Model trained! Load Top-K uncertain or click UMAP to select samples. "
+                    f"Stability: {stable_rounds}/{stability_required_rounds} rounds "
+                    f"(flip ratio {flip_ratio:.3f})."
+                )
 
     # Always compute current metrics for display
     train_acc = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
@@ -1985,17 +2073,43 @@ def update_dashboard(
         current_sample_idx = 0
 
     # Button states
-    annotate_disabled = not (phase == "annotation" and pending_queue > 0)
-    train_disabled = phase != "training"
+    annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
+    if (
+        phase == "annotation"
+        and annotations_this_round < batch_size
+        and pending_queue == 0
+        and selected_sample_id is not None
+        and selected_sample_id not in labeled_idx
+    ):
+        annotate_disabled = False
+    train_disabled = stop_active_learning or annotations_this_round == 0
 
     if pending_queue == 0 and phase == "annotation" and len(annotation_queue) == 0:
-        status_message = "Queue empty. Load Top-K uncertain or click UMAP and add samples."
+        status_message = "Queue empty. Load Top-K uncertain or click UMAP, then Annotate."
+
+    if stop_active_learning:
+        status_message = (
+            "Stopping criterion met: predictions stable and no uncertain samples. "
+            "Reset to start a new run."
+        )
 
     if trigger_id in [None, "url", "reset-btn"]:
         pending_queue = max(0, len(annotation_queue) - current_pointer)
-        status_message = f"Annotation Phase | Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue}"
-        annotate_disabled = not (phase == "annotation" and pending_queue > 0)
-        train_disabled = phase != "training"
+        status_message = (
+            f"Annotation Phase | Annotated: {annotations_this_round}/{batch_size} | "
+            f"Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue} | "
+            f"Stability: {stable_rounds}/{stability_required_rounds}"
+        )
+        annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
+        if (
+            phase == "annotation"
+            and annotations_this_round < batch_size
+            and pending_queue == 0
+            and selected_sample_id is not None
+            and selected_sample_id not in labeled_idx
+        ):
+            annotate_disabled = False
+        train_disabled = stop_active_learning or annotations_this_round == 0
 
     heatmap_fig = build_confusion_heatmap(cm)
     learning_curve_fig = build_learning_curve()
@@ -2022,7 +2136,11 @@ def update_dashboard(
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
     test_accuracy_display = f"{test_acc:.4f}"
-    queue_status = f"Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue}"
+    queue_status = (
+        f"Annotated: {annotations_this_round}/{batch_size} | "
+        f"Queue: {len(annotation_queue)}/{batch_size} | Pending: {pending_queue} | "
+        f"Stable: {stable_rounds}/{stability_required_rounds}"
+    )
 
     return (
         eeg_fig,
@@ -2200,7 +2318,7 @@ if __name__ == "__main__":
     print("[OK] Interactive UMAP-to-EEG (from vis_combined_gauri.py)")
     print("[OK] Annotation Queue System")
     print("[OK] Load Top-K Uncertain Button")
-    print("[OK] Add to Annotation Batch Button")
+    print("[OK] Annotate Button supports direct labeling")
     print("[OK] DGrid Transformation (no overlapping points)")
     print("[OK] Decision Boundary Visualization")
     print("=" * 70)
@@ -2208,7 +2326,7 @@ if __name__ == "__main__":
     print("=" * 70)
     print("\nHow to use:")
     print("1. Click any point in the UMAP embedding")
-    print("2. Click 'Add to Annotation Batch' to queue it")
+    print("2. Click 'Annotate (Oracle)' to label selected sample")
     print("3. Or click 'Load Top-K Uncertain' to auto-load uncertain samples")
     print("4. Click 'Annotate (Oracle)' to label queued samples")
     print("5. Click feature bars to see EEG evidence")
