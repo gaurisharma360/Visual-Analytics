@@ -1825,27 +1825,17 @@ def update_dashboard(
         else:
             current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
 
-            if len(unlabeled_idx) == 0:
+            if len(current_batch) == 0:
                 annotation_queue = []
                 current_pointer = 0
                 selected_sample_id = None
-                status_message = "No unlabeled samples left to load."
+                status_message = "No samples require doctor annotation."
             else:
-                # Always load top-K uncertain unlabeled samples while not converged.
-                probs_unlabeled = model.predict_proba(X_train[unlabeled_idx])
-                uncertainty_unlabeled = 1 - np.max(probs_unlabeled, axis=1)
-                sorted_idx = np.argsort(uncertainty_unlabeled)[::-1]
-                k = min(batch_size, len(unlabeled_idx))
-                top_k_unlabeled = unlabeled_idx[sorted_idx[:k]]
-
-                annotation_queue = [int(idx) for idx in top_k_unlabeled]
+                annotation_queue = [int(idx) for idx in current_batch]
                 current_pointer = 0
                 phase = "annotation"
-                selected_sample_id = annotation_queue[0] if len(annotation_queue) > 0 else None
-                status_message = (
-                    f"Loaded Top-{k} uncertain samples to queue "
-                    f"(doctor-needed in top-K: {len(current_batch)})."
-                )
+                selected_sample_id = annotation_queue[0]
+                status_message = f"Loaded {len(annotation_queue)} samples needing doctor annotation."
 
     if trigger_id == "confidence-slider":
         current_confidence_threshold = confidence_value
