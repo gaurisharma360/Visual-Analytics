@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import welch, butter, filtfilt
 from scipy.stats import skew, kurtosis
-from scipy.ndimage import gaussian_filter1d, uniform_filter1d
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d, maximum_filter1d, minimum_filter1d
 
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
@@ -25,15 +25,16 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 try:
     from umap import UMAP
-
     UMAP_AVAILABLE = True
     UMAP_IMPORT_ERROR = None
 except ImportError:
     UMAP_AVAILABLE = False
     UMAP_IMPORT_ERROR = "ImportError: install 'umap-learn' in the active environment"
+    UMAP = None
 except Exception as exc:
     UMAP_AVAILABLE = False
     UMAP_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    UMAP = None
 
 import dash
 from dash import dcc, html
@@ -199,60 +200,113 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
     Highlight the EEG regions corresponding to a specific feature.
     Returns indices/ranges to highlight based on the feature type.
     """
-    n_samples = len(signal)
+    signal = np.asarray(signal, dtype=float)
+    window_size = max(8, int(fs * 0.5))
+
+    def _window_std(x):
+        mean_x = uniform_filter1d(x, size=window_size, mode="nearest")
+        mean_sq_x = uniform_filter1d(x ** 2, size=window_size, mode="nearest")
+        return np.sqrt(np.maximum(mean_sq_x - mean_x ** 2, 0.0))
+
+    def _window_rms(x):
+        return np.sqrt(uniform_filter1d(x ** 2, size=window_size, mode="nearest"))
+
+    def _window_p2p(x):
+        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size, mode="nearest")
+
+    def _top_mask(score, pct=75):
+        threshold = np.percentile(score, pct)
+        return score >= threshold
 
     if feature_name == "Delta Power":
         # Highlight slow oscillations (0.5-4 Hz)
         filtered = bandpass_filter(signal, 0.5, 4, fs)
-        return filtered, "Delta band (0.5-4 Hz)"
+        return filtered, "Delta band (0.5-4 Hz)", None
 
     elif feature_name == "Theta Power":
         # Highlight 4-8 Hz oscillations
         filtered = bandpass_filter(signal, 4, 8, fs)
-        return filtered, "Theta band (4-8 Hz)"
+        return filtered, "Theta band (4-8 Hz)", None
 
     elif feature_name == "Alpha Power":
         # Highlight 8-13 Hz oscillations
         filtered = bandpass_filter(signal, 8, 13, fs)
-        return filtered, "Alpha band (8-13 Hz)"
+        return filtered, "Alpha band (8-13 Hz)", None
 
     elif feature_name == "Beta Power":
         # Highlight 13-30 Hz oscillations
         filtered = bandpass_filter(signal, 13, 30, fs)
-        return filtered, "Beta band (13-30 Hz)"
+        return filtered, "Beta band (13-30 Hz)", None
 
     elif feature_name == "Std Dev" or feature_name == "RMS":
-        # Highlight high energy regions
-        window_size = int(fs * 0.5)  # 0.5 second windows
-        energy = np.array([np.std(signal[i:i + window_size])
-                           for i in range(0, len(signal) - window_size, window_size // 2)])
-        return energy, "High variability regions"
+        # Highlight high-variance/high-energy regions using rolling statistics.
+        score = _window_std(signal) if feature_name == "Std Dev" else _window_rms(signal)
+        return score, "High variability regions", _top_mask(score)
 
     elif feature_name == "Peak-to-Peak":
-        # Find large amplitude spikes
-        window_size = int(fs * 0.2)  # 0.2 second windows
-        p2p = np.array([np.ptp(signal[i:i + window_size])
-                        for i in range(0, len(signal) - window_size, window_size // 4)])
-        return p2p, "Large amplitude spikes"
+        score = _window_p2p(signal)
+        return score, "Large amplitude spikes", _top_mask(score)
 
     elif feature_name == "Kurtosis":
-        # Highlight sharp peaks
-        abs_signal = np.abs(signal)
-        smoothed = gaussian_filter1d(abs_signal, sigma=5)
-        return smoothed, "Sharp peaks/spikes"
+        # Sharp transients are emphasized by residual energy.
+        smooth = gaussian_filter1d(signal, sigma=4)
+        residual = np.abs(signal - smooth)
+        return residual, "Sharp peaks/spikes", _top_mask(residual, pct=85)
 
     elif feature_name == "Skewness":
-        # Highlight asymmetric patterns
-        smoothed = gaussian_filter1d(signal, sigma=3)
-        return smoothed, "Asymmetric waveform segments"
+        # Approximate local asymmetry with rolling standardized third moment.
+        smooth = gaussian_filter1d(signal, sigma=2)
+        local_mean = uniform_filter1d(smooth, size=window_size, mode="nearest")
+        centered = smooth - local_mean
+        local_std = np.sqrt(np.maximum(uniform_filter1d(centered ** 2, size=window_size, mode="nearest"), 1e-8))
+        local_skew = uniform_filter1d((centered / local_std) ** 3, size=window_size, mode="nearest")
+        skew_mask = np.abs(local_skew) >= np.percentile(np.abs(local_skew), 75)
+        return local_skew, "Asymmetric waveform segments", skew_mask
 
     elif feature_name == "Mean":
         # Show baseline shifts
         baseline = uniform_filter1d(signal, size=int(fs))
-        return baseline, "Baseline trend"
+        return baseline, "Baseline trend", None
 
     else:
-        return signal, "Raw signal"
+        return signal, "Raw signal", None
+
+
+FEATURE_NAMES = [
+    "Mean", "Std Dev", "RMS", "Peak-to-Peak",
+    "Skewness", "Kurtosis",
+    "Delta Power", "Theta Power", "Alpha Power", "Beta Power",
+]
+
+
+def compute_feature_contributions(sample_idx):
+    """Compute exact linear contributions: logistic_weight * scaled_feature_value."""
+    if not hasattr(model.named_steps['clf'], 'coef_'):
+        return None, None, None
+
+    weights = model.named_steps['clf'].coef_[0]
+    sample_features = X_train[sample_idx:sample_idx + 1]
+    sample_scaled = model.named_steps['scaler'].transform(sample_features)[0]
+    contributions = weights * sample_scaled
+    probs = model.predict_proba(sample_features)[0]
+    return np.asarray(FEATURE_NAMES), contributions, probs
+
+
+def get_clinical_feature_explanation(feature_name):
+    """Return a concise clinical interpretation for the selected engineered feature."""
+    explanation_map = {
+        "Delta Power": "High delta power can reflect abnormal slow-wave activity often observed in ictal or peri-ictal states.",
+        "Theta Power": "Elevated theta power may indicate abnormal rhythmic slowing associated with seizure propagation.",
+        "Alpha Power": "Alpha suppression or abnormal alpha shifts can mark disrupted cortical rhythms during pathological events.",
+        "Beta Power": "Beta changes can indicate altered fast activity; focal increases may align with epileptiform discharges.",
+        "Peak-to-Peak": "Large peak-to-peak amplitude can correspond to epileptic spike-and-wave or sharp transient discharges.",
+        "Kurtosis": "High kurtosis suggests sharp, heavy-tailed transients, a common signature of epileptiform spikes.",
+        "Std Dev": "High standard deviation indicates unstable signal amplitude and increased neural variability.",
+        "RMS": "High RMS reflects sustained signal energy, which can increase during abnormal synchronized activity.",
+        "Skewness": "High skewness indicates waveform asymmetry, which may arise from non-sinusoidal epileptiform patterns.",
+        "Mean": "Baseline drift in the local mean may reveal slow shifts in underlying cortical potential dynamics.",
+    }
+    return explanation_map.get(feature_name, "This feature captures a model-relevant EEG pattern for the current segment.")
 
 
 # ==========================================================
@@ -646,22 +700,23 @@ def build_data_donut():
         hole=0.5,
         sort=False,
         marker=dict(colors=["#27ae60", "#3498db", "#1d4ed8", "#e74c3c"]),
-        textfont=dict(size=11),
+        textfont=dict(size=10),
     )])
 
     fig.update_layout(
         title=None,
         autosize=True,
-        margin=dict(l=20, r=20, t=30, b=20),
+        margin=dict(l=10, r=10, t=20, b=10),
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=-0.3,
+            y=-0.25,
             xanchor="center",
             x=0.5,
-            font=dict(size=9),
+            font=dict(size=8),
         ),
     )
+
     return fig
 
 
@@ -709,57 +764,35 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
         sample_idx: Index of the sample to explain
         importance_mode: "contribution" or "uncertainty"
     """
-    # Feature names matching the extracted features
-    feature_names = [
-        "Mean", "Std Dev", "RMS", "Peak-to-Peak",
-        "Skewness", "Kurtosis",
-        "Delta Power", "Theta Power", "Alpha Power", "Beta Power"
-    ]
-
-    # Get model coefficients and sample features
-    if hasattr(model.named_steps['clf'], 'coef_'):
-        weights = model.named_steps['clf'].coef_[0]  # Shape: (n_features,)
-    else:
+    feature_names, contributions, probs = compute_feature_contributions(sample_idx)
+    if feature_names is None:
         # Model not trained yet
         return go.Figure().update_layout(
             title="Model not trained yet",
             template="plotly_white",
         )
 
-    # Transform the sample
-    sample_features = X_train[sample_idx:sample_idx + 1]
-    sample_scaled = model.named_steps['scaler'].transform(sample_features)[0]
-
-    # Calculate contributions: w_i * x_i
-    contributions = weights * sample_scaled
-
-    # Get prediction
-    probs = model.predict_proba(X_train[sample_idx:sample_idx + 1])[0]
     pred_class = np.argmax(probs)
     pred_prob = probs[1]  # Probability of seizure
 
     if importance_mode == "contribution":
-        # Feature Contribution View — frequency features at top, time features at bottom
+        # Always show frequency features first, then time-domain features
+        freq_names = ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]
+        freq_indices = [i for i, n in enumerate(feature_names) if n in freq_names]
+        time_indices = [i for i, n in enumerate(feature_names) if n not in freq_names]
+        # Keep order: freq_names as listed, then time features by abs(contribution)
+        freq_indices_sorted = [feature_names.tolist().index(n) for n in freq_names]
+        time_indices_sorted = sorted(time_indices, key=lambda i: -abs(contributions[i]))
+        final_indices = freq_indices_sorted + time_indices_sorted
+
         fig = go.Figure()
-
-        freq_idx = [i for i, n in enumerate(feature_names) if "Power" in n]
-        time_idx = [i for i, n in enumerate(feature_names) if "Power" not in n]
-
-        # Within each group: sort ascending by abs so the highest ends up at top (plotly h-bar: last = top)
-        freq_sorted = sorted(freq_idx, key=lambda i: abs(contributions[i]))
-        time_sorted = sorted(time_idx, key=lambda i: abs(contributions[i]))
-
-        # time at bottom, frequency at top
-        sorted_indices = np.array(time_sorted + freq_sorted)
-
-        colors = ['#e74c3c' if contributions[i] > 0 else '#3498db' for i in sorted_indices]
-
+        colors = ['#e74c3c' if contributions[i] > 0 else '#3498db' for i in final_indices]
         fig.add_trace(go.Bar(
-            y=[feature_names[i] for i in sorted_indices],
-            x=[contributions[i] for i in sorted_indices],
+            y=[feature_names[i] for i in final_indices],
+            x=[contributions[i] for i in final_indices],
             orientation='h',
             marker=dict(color=colors),
-            hovertemplate="%{y}: %{x:.3f}<extra></extra>",
+            hovertemplate="%{y}: %{x:.4f}<extra></extra>",
         ))
 
         fig.update_layout(
@@ -1124,7 +1157,7 @@ def build_uncertainty_histogram(confidence_threshold):
         hist_fig.add_trace(go.Histogram(
             x=all_train_uncertainty[initial_labeled_idx],
             name=f"Init ({initial_count})",
-            marker_color="#52c41a",
+            marker=dict(color="#52c41a"),
             opacity=0.7,
             nbinsx=30,
         ))
@@ -1134,7 +1167,7 @@ def build_uncertainty_histogram(confidence_threshold):
         hist_fig.add_trace(go.Histogram(
             x=all_train_uncertainty[oracle_annotated_idx],
             name=f"Oracle ({oracle_count})",
-            marker_color="#237804",
+            marker=dict(color="#237804"),
             opacity=0.7,
             nbinsx=30,
         ))
@@ -1154,7 +1187,7 @@ def build_uncertainty_histogram(confidence_threshold):
         hist_fig.add_trace(go.Histogram(
             x=unlabeled_uncertainty[pool_mask],
             name=f"Pool ({auto_pool_count})",
-            marker_color="#3498db",
+            marker=dict(color="#3498db"),
             opacity=0.7,
             nbinsx=30,
         ))
@@ -1179,7 +1212,7 @@ def build_uncertainty_histogram(confidence_threshold):
             hist_fig.add_trace(go.Histogram(
                 x=unlabeled_uncertainty[confident_in_batch_mask],
                 name=f"Batch ({auto_batch_count})",
-                marker_color="#1d4ed8",
+                marker=dict(color="#1d4ed8"),
                 opacity=0.7,
                 nbinsx=30,
             ))
@@ -1190,7 +1223,7 @@ def build_uncertainty_histogram(confidence_threshold):
         hist_fig.add_trace(go.Histogram(
             x=all_train_uncertainty[current_batch],
             name=f"Doctor ({doctor_count})",
-            marker_color="#e74c3c",
+            marker=dict(color="#e74c3c"),
             opacity=0.7,
             nbinsx=30,
         ))
@@ -1238,39 +1271,6 @@ def build_uncertainty_histogram(confidence_threshold):
     )
 
     return hist_fig
-
-
-def build_data_donut():
-    """Build donut chart showing pool composition"""
-    labeled = len(labeled_idx)
-    doctor = len(current_batch)
-    auto_batch = batch_auto_count
-    auto_pool = pool_auto_count
-
-    fig = go.Figure(data=[go.Pie(
-        labels=["Labeled", "Auto (Pool)", "Auto (Batch)", "Needs Doctor"],
-        values=[labeled, auto_pool, auto_batch, doctor],
-        hole=0.5,
-        sort=False,
-        marker=dict(colors=["#27ae60", "#3498db", "#1d4ed8", "#e74c3c"]),
-        textfont=dict(size=10),
-    )])
-
-    fig.update_layout(
-        title=None,
-        autosize=True,
-        margin=dict(l=10, r=10, t=20, b=10),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=-0.25,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=8),
-        ),
-    )
-
-    return fig
 
 
 # Initialize first time
@@ -1389,7 +1389,6 @@ app.index_string = '''
 
 app.layout = html.Div([
     dcc.Location(id="url", refresh=True),
-    dcc.Store(id="selected-feature-store", data=None),  # Track clicked feature
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
 
@@ -1600,6 +1599,19 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Annotation Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
                 dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "340px"}, config={'responsive': True, 'displayModeBar': 'hover'}),
+                html.Div(
+                    id="clinical-explanation",
+                    style={
+                        "marginTop": "4px",
+                        "fontSize": "10px",
+                        "color": "#334155",
+                        "backgroundColor": "#f8fafc",
+                        "border": "1px solid #e2e8f0",
+                        "borderRadius": "6px",
+                        "padding": "6px",
+                        "lineHeight": "1.35",
+                    },
+                ),
             ], style={
                 "flex": "1 1 0",
                 "minWidth": "0",
@@ -1763,6 +1775,7 @@ app.layout = html.Div([
     Output("embedding-title", "children"),
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
+    Output("clinical-explanation", "children"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
@@ -1773,7 +1786,7 @@ app.layout = html.Div([
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
-    State("selected-feature-store", "data"),
+    Input("feature-importance", "clickData"),  # Immediate feature click
     prevent_initial_call=False,
 )
 def update_dashboard(
@@ -1787,7 +1800,7 @@ def update_dashboard(
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
-        selected_feature,
+        feature_click_data,
 ):
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
@@ -1994,10 +2007,16 @@ def update_dashboard(
             showlegend=True,
         ))
 
+        # Extract selected feature from clickData directly
+        if feature_click_data and "points" in feature_click_data:
+            selected_feature = feature_click_data["points"][0].get("y", None)
+        else:
+            selected_feature = None
+
         # If a feature is selected, highlight the corresponding evidence
         if selected_feature:
             try:
-                highlighted_signal, description = highlight_feature_in_eeg(raw_signal, selected_feature)
+                highlighted_signal, description, highlight_mask = highlight_feature_in_eeg(raw_signal, selected_feature)
 
                 # For frequency bands, overlay the filtered signal
                 if selected_feature in ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]:
@@ -2010,7 +2029,7 @@ def update_dashboard(
                         opacity=0.8,
                     ))
 
-                # For other features, show as overlay or annotation
+                # For shape/baseline features, show processed evidence trace.
                 elif selected_feature in ["Kurtosis", "Skewness", "Mean"]:
                     eeg_fig.add_trace(go.Scatter(
                         y=highlighted_signal,
@@ -2021,24 +2040,27 @@ def update_dashboard(
                         opacity=0.7,
                     ))
 
-                # For window-based features (Std Dev, Peak-to-Peak, RMS)
-                else:
-                    # Add shaded regions for high values
-                    if len(highlighted_signal) > 0:
-                        threshold = np.percentile(highlighted_signal, 75)  # Top 25%
-                        high_regions = highlighted_signal > threshold
+                # Overlay highlighted raw-signal regions for window/transient features.
+                if highlight_mask is not None and np.any(highlight_mask):
+                    eeg_fig.add_trace(go.Scatter(
+                        y=np.where(highlight_mask, raw_signal, np.nan),
+                        mode="lines",
+                        line=dict(color="#dc2626", width=2.5),
+                        name=f"{selected_feature} evidence",
+                        showlegend=True,
+                        opacity=0.9,
+                    ))
 
-                        # Create annotation about high-energy regions
-                        eeg_fig.add_annotation(
-                            text=f"[FEATURE] {selected_feature}: {description}",
-                            xref="paper", yref="paper",
-                            x=0.5, y=1.05,
-                            showarrow=False,
-                            font=dict(size=11, color="#ef4444"),
-                            bgcolor="#fef2f2",
-                            bordercolor="#ef4444",
-                            borderwidth=1,
-                        )
+                eeg_fig.add_annotation(
+                    text=f"[FEATURE] {selected_feature}: {description}",
+                    xref="paper", yref="paper",
+                    x=0.5, y=1.05,
+                    showarrow=False,
+                    font=dict(size=11, color="#ef4444"),
+                    bgcolor="#fef2f2",
+                    bordercolor="#ef4444",
+                    borderwidth=1,
+                )
 
             except Exception as e:
                 print(f"Error highlighting feature: {e}")
@@ -2133,14 +2155,41 @@ def update_dashboard(
 
     # Build feature importance for current sample
     importance_mode = "contribution"
+    feature_sample_idx = 0
     if selected_sample_id is not None:
-        feature_fig = build_feature_importance(selected_sample_id, importance_mode)
+        feature_sample_idx = int(selected_sample_id)
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
     elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
-        feature_fig = build_feature_importance(annotation_queue[current_pointer], importance_mode)
+        feature_sample_idx = int(annotation_queue[current_pointer])
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
     elif len(labeled_idx) > 0:
-        feature_fig = build_feature_importance(labeled_idx[-1], importance_mode)
+        feature_sample_idx = int(labeled_idx[-1])
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
     else:
         feature_fig = build_feature_importance(0, importance_mode)
+
+    # Ensure selected_feature is always defined
+    selected_feature = None
+    if feature_click_data and "points" in feature_click_data:
+        selected_feature = feature_click_data["points"][0].get("y", None)
+
+    clinical_explanation = "Click a feature bar to inspect clinically relevant EEG evidence."
+    if selected_feature:
+        feature_names, contributions, _ = compute_feature_contributions(feature_sample_idx)
+        contribution_value = None
+        if feature_names is not None:
+            feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
+            if selected_feature in feature_to_idx:
+                contribution_value = float(contributions[feature_to_idx[selected_feature]])
+
+        if contribution_value is not None:
+            direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
+            clinical_explanation = (
+                f"{selected_feature}: contribution={contribution_value:+.4f} ({direction_text}). "
+                f"{get_clinical_feature_explanation(selected_feature)}"
+            )
+        else:
+            clinical_explanation = f"{selected_feature}: {get_clinical_feature_explanation(selected_feature)}"
 
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
@@ -2168,25 +2217,8 @@ def update_dashboard(
         f"{embedding_type} Embedding View",
         queue_status,
         current_sample_idx,
+        clinical_explanation,
     )
-
-
-# ==========================================================
-# FEATURE CLICK CALLBACK - Update selected feature store
-# ==========================================================
-
-@app.callback(
-    Output("selected-feature-store", "data"),
-    Input("feature-importance", "clickData"),
-    prevent_initial_call=True,
-)
-def handle_feature_click(click_data):
-    """When user clicks a feature bar, store it for EEG highlighting."""
-    if click_data and "points" in click_data:
-        # Extract the feature name from the clicked point
-        feature_name = click_data["points"][0].get("y", None)
-        return feature_name
-    return None
 
 
 # ==========================================================
