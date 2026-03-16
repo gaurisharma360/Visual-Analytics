@@ -1331,7 +1331,6 @@ app.index_string = '''
 
 app.layout = html.Div([
     dcc.Location(id="url", refresh=True),
-    dcc.Store(id="selected-feature-store", data=None),  # Track clicked feature
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
 
@@ -1713,7 +1712,7 @@ app.layout = html.Div([
     Input("add-to-batch-btn", "n_clicks"),  # NEW: Add to queue button
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
-    State("selected-feature-store", "data"),
+    Input("feature-importance", "clickData"),  # Immediate feature click
     prevent_initial_call=False,
 )
 def update_dashboard(
@@ -1728,7 +1727,7 @@ def update_dashboard(
         add_to_batch_clicks,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
-        selected_feature,
+        feature_click_data,
 ):
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
@@ -1859,7 +1858,7 @@ def update_dashboard(
 
     pending_queue = max(0, len(annotation_queue) - current_pointer)
 
-    # NEW: EEG graph shows selected sample or queue preview
+    # EEG graph shows selected sample or queue preview
     if selected_sample_id is not None:
         current_sample_idx = selected_sample_id
         raw_signal = X_raw_train[selected_sample_id]
@@ -1874,6 +1873,11 @@ def update_dashboard(
             name="Raw EEG",
             showlegend=True,
         ))
+
+        # Extract selected feature from clickData
+        selected_feature = None
+        if feature_click_data and "points" in feature_click_data:
+            selected_feature = feature_click_data["points"][0].get("y", None)
 
         # If a feature is selected, highlight the corresponding evidence
         if selected_feature:
@@ -2022,22 +2026,7 @@ def update_dashboard(
     )
 
 
-# ==========================================================
-# FEATURE CLICK CALLBACK - Update selected feature store
-# ==========================================================
 
-@app.callback(
-    Output("selected-feature-store", "data"),
-    Input("feature-importance", "clickData"),
-    prevent_initial_call=True,
-)
-def handle_feature_click(click_data):
-    """When user clicks a feature bar, store it for EEG highlighting."""
-    if click_data and "points" in click_data:
-        # Extract the feature name from the clicked point
-        feature_name = click_data["points"][0].get("y", None)
-        return feature_name
-    return None
 
 
 # ==========================================================
