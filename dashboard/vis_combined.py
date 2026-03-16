@@ -293,6 +293,141 @@ def compute_feature_contributions(sample_idx):
     return np.asarray(FEATURE_NAMES), contributions, probs
 
 
+def compute_decision_summary(sample_idx):
+    """Compute logit, probability and grouped contributions for the decision panel."""
+    feature_names, contributions, probs = compute_feature_contributions(sample_idx)
+    if feature_names is None:
+        return None
+    intercept = model.named_steps['clf'].intercept_[0]
+    logit = float(np.sum(contributions) + intercept)
+    pred_prob = float(probs[1])
+    pred_class = int(np.argmax(probs))
+    pos_pairs = sorted(
+        [(feature_names[i], float(contributions[i])) for i in range(len(feature_names)) if contributions[i] > 0],
+        key=lambda x: -x[1],
+    )
+    neg_pairs = sorted(
+        [(feature_names[i], float(contributions[i])) for i in range(len(feature_names)) if contributions[i] < 0],
+        key=lambda x: x[1],
+    )
+    return {
+        "logit": logit,
+        "pred_prob": pred_prob,
+        "pred_class": pred_class,
+        "for_seizure": pos_pairs,
+        "against_seizure": neg_pairs,
+        "contributions": contributions,
+        "feature_names": feature_names,
+    }
+
+
+def generate_feature_panel_content(sample_idx, selected_feature=None):
+    """Return (decision_header, balance_bar, reflection_text) as Dash HTML children."""
+    summary = compute_decision_summary(sample_idx)
+
+    if summary is None:
+        placeholder = html.Span(
+            "Train the model to see decision insights.",
+            style={"fontSize": "10px", "color": "#94a3b8"},
+        )
+        return placeholder, "", ""
+
+    pred_label = "Seizure" if summary["pred_class"] == 1 else "Non-Seizure"
+    pred_color = "#dc2626" if summary["pred_class"] == 1 else "#2563eb"
+    bg_color = "#fef2f2" if summary["pred_class"] == 1 else "#eff6ff"
+    border_color = "#fca5a5" if summary["pred_class"] == 1 else "#93c5fd"
+    logit = summary["logit"]
+    pred_prob = summary["pred_prob"]
+
+    # 1. Decision header
+    decision_header = html.Div([
+        html.Span("Model Decision  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
+        html.Span("Prediction: ", style={"fontSize": "10px", "color": "#6b7280"}),
+        html.Span(pred_label, style={"fontWeight": "700", "fontSize": "11px", "color": pred_color}),
+        html.Span(f"  P(seizure): {pred_prob:.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  Score: {logit:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+    ], style={
+        "backgroundColor": bg_color,
+        "border": f"1px solid {border_color}",
+        "borderRadius": "6px",
+        "padding": "4px 8px",
+        "marginBottom": "3px",
+    })
+
+    # 2. Balance bar (0% = full Non-Seizure, 100% = full Seizure, midpoint=50%)
+    clamped = max(-5.0, min(5.0, logit))
+    pct = (clamped + 5.0) / 10.0 * 100
+
+    balance_bar = html.Div([
+        html.Div(style={
+            "height": "10px",
+            "background": "linear-gradient(to right, #bfdbfe 0%, #e5e7eb 50%, #fca5a5 100%)",
+            "borderRadius": "5px",
+            "position": "relative",
+            "marginBottom": "1px",
+        }, children=[
+            html.Div("▲", style={
+                "position": "absolute",
+                "left": f"calc({pct:.0f}% - 5px)",
+                "top": "-2px",
+                "fontSize": "12px",
+                "color": pred_color,
+                "lineHeight": "1",
+            }),
+        ]),
+        html.Div([
+            html.Span("← Non-Seizure", style={"fontSize": "8px", "color": "#2563eb"}),
+            html.Span(f"score {logit:+.2f}", style={"fontSize": "8px", "color": "#374151"}),
+            html.Span("Seizure →", style={"fontSize": "8px", "color": "#dc2626"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "3px"}),
+    ])
+
+    # 3. Reflection text
+    if selected_feature:
+        explanation = get_clinical_feature_explanation(selected_feature)
+        fnames = list(summary["feature_names"])
+        fidx = fnames.index(selected_feature) if selected_feature in fnames else None
+        contrib_text = ""
+        if fidx is not None:
+            v = float(summary["contributions"][fidx])
+            direction = "toward seizure" if v >= 0 else "toward non-seizure"
+            contrib_text = f"  Contribution: {v:+.4f} ({direction})."
+        reflection = html.Div([
+            html.Span("Inspecting: ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
+            html.Span(selected_feature, style={"fontWeight": "600", "fontSize": "10px", "color": "#7c3aed"}),
+            html.Span(contrib_text, style={"fontSize": "9px", "color": "#6b7280"}),
+            html.Br(),
+            html.Span(explanation, style={"fontSize": "9px", "color": "#374151", "lineHeight": "1.4"}),
+        ], style={
+            "backgroundColor": "#faf5ff",
+            "border": "1px solid #d8b4fe",
+            "borderRadius": "6px",
+            "padding": "4px 8px",
+            "marginTop": "2px",
+        })
+    else:
+        top_for = summary["for_seizure"][:3]
+        top_against = summary["against_seizure"][:3]
+        lines = []
+        if top_for:
+            lines.append("↑ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
+        if top_against:
+            lines.append("↓ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
+        lines.append(f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
+        reflection = html.Div([
+            html.Span("Model reasoning:  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
+            html.Span("  ".join(lines), style={"fontSize": "9px", "color": "#374151", "lineHeight": "1.5"}),
+        ], style={
+            "backgroundColor": "#f8fafc",
+            "border": "1px solid #e2e8f0",
+            "borderRadius": "6px",
+            "padding": "4px 8px",
+            "marginTop": "2px",
+        })
+
+    return decision_header, balance_bar, reflection
+
+
 def get_clinical_feature_explanation(feature_name):
     """Return a concise clinical interpretation for the selected engineered feature."""
     explanation_map = {
@@ -777,20 +912,16 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
     pred_prob = probs[1]  # Probability of seizure
 
     if importance_mode == "contribution":
-        # Always show frequency features first, then time-domain features
-        freq_names = ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]
-        freq_indices = [i for i, n in enumerate(feature_names) if n in freq_names]
-        time_indices = [i for i, n in enumerate(feature_names) if n not in freq_names]
-        # Keep order: freq_names as listed, then time features by abs(contribution)
-        freq_indices_sorted = [feature_names.tolist().index(n) for n in freq_names]
-        time_indices_sorted = sorted(time_indices, key=lambda i: -abs(contributions[i]))
-        final_indices = freq_indices_sorted + time_indices_sorted
+        # Sort by contribution value descending: most FOR seizure at top, AGAINST at bottom
+        sorted_indices = sorted(range(len(feature_names)), key=lambda i: contributions[i], reverse=True)
+        bar_names = [feature_names[i] for i in sorted_indices]
+        bar_vals = [float(contributions[i]) for i in sorted_indices]
+        colors = ['#dc2626' if v > 0 else '#2563eb' for v in bar_vals]
 
         fig = go.Figure()
-        colors = ['#e74c3c' if contributions[i] > 0 else '#3498db' for i in final_indices]
         fig.add_trace(go.Bar(
-            y=[feature_names[i] for i in final_indices],
-            x=[contributions[i] for i in final_indices],
+            y=bar_names,
+            x=bar_vals,
             orientation='h',
             marker=dict(color=colors),
             hovertemplate="%{y}: %{x:.4f}<extra></extra>",
@@ -802,7 +933,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
             yaxis_title="",
             template="plotly_white",
             height=260,
-            margin=dict(l=120, r=14, t=10, b=44),
+            margin=dict(l=120, r=14, t=22, b=44),
             showlegend=False,
         )
 
@@ -810,7 +941,21 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
         fig.update_yaxes(automargin=True)
 
         # Add vertical line at 0
-        fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
+        fig.add_vline(x=0, line_dash="dash", line_color="#374151", line_width=1)
+
+        # Group direction labels
+        fig.add_annotation(
+            text="AGAINST Seizure ◀",
+            xref="paper", yref="paper", x=0.0, y=1.07,
+            xanchor="left", showarrow=False,
+            font=dict(size=8, color="#2563eb"),
+        )
+        fig.add_annotation(
+            text="▶ FOR Seizure",
+            xref="paper", yref="paper", x=1.0, y=1.07,
+            xanchor="right", showarrow=False,
+            font=dict(size=8, color="#dc2626"),
+        )
 
 
     else:  # uncertainty mode
@@ -1688,16 +1833,18 @@ app.layout = html.Div([
 
             html.Div([
                 html.H3("Feature Importance", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.P("Contribution view", style={"fontSize": "9px", "color": "#64748b", "margin": "0 0 4px 0"}),
+                html.Div(id="feature-decision-header"),
+                html.Div(id="feature-balance-bar"),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"height": "calc(100% - 46px)", "minHeight": "260px"},
+                    style={"height": "calc(100% - 120px)", "minHeight": "200px"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
                         'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                     },
                 ),
+                html.Div(id="feature-reflection-text"),
             ], style={
                 "flex": "1 1 0",
                 "minWidth": "0",
@@ -1777,6 +1924,9 @@ app.layout = html.Div([
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
     Output("clinical-explanation", "children"),
+    Output("feature-decision-header", "children"),
+    Output("feature-balance-bar", "children"),
+    Output("feature-reflection-text", "children"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
@@ -2192,6 +2342,11 @@ def update_dashboard(
         else:
             clinical_explanation = f"{selected_feature}: {get_clinical_feature_explanation(selected_feature)}"
 
+    # Generate decision panel content for Feature Importance panel
+    feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+        feature_sample_idx, selected_feature
+    )
+
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
     test_accuracy_display = f"{test_acc:.4f}"
@@ -2219,6 +2374,9 @@ def update_dashboard(
         queue_status,
         current_sample_idx,
         clinical_explanation,
+        feature_decision_header,
+        feature_balance_bar,
+        feature_reflection_text,
     )
 
 
