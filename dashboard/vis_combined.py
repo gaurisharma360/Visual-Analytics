@@ -7,6 +7,7 @@
 #
 
 import warnings
+import importlib
 from sklearn.exceptions import ConvergenceWarning
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -37,6 +38,19 @@ except Exception as exc:
     UMAP_AVAILABLE = False
     UMAP_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
     UMAP = None
+
+try:
+    shap = importlib.import_module("shap")
+    SHAP_AVAILABLE = True
+    SHAP_IMPORT_ERROR = None
+except ImportError:
+    SHAP_AVAILABLE = False
+    SHAP_IMPORT_ERROR = "ImportError: install 'shap' in the active environment"
+    shap = None
+except Exception as exc:
+    SHAP_AVAILABLE = False
+    SHAP_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    shap = None
 
 import dash
 from dash import dcc, html
@@ -280,6 +294,33 @@ FEATURE_NAMES = [
     "Delta Power", "Theta Power", "Alpha Power", "Beta Power",
 ]
 
+shap_explainer = None
+
+
+def initialize_shap_explainer():
+    """Initialize SHAP explainer for the current trained pipeline."""
+    global shap_explainer
+
+    shap_explainer = None
+
+    if not SHAP_AVAILABLE:
+        print(f"[SHAP] UNAVAILABLE | {SHAP_IMPORT_ERROR}")
+        return
+
+    if model is None:
+        print("[SHAP] SKIPPED | model not ready yet")
+        return
+
+    try:
+        scaler = model.named_steps["scaler"]
+        clf = model.named_steps["clf"]
+        background_scaled = scaler.transform(X_train)
+        shap_explainer = shap.LinearExplainer(clf, background_scaled)
+        print(f"[SHAP] OK | background_shape={background_scaled.shape}")
+    except Exception as exc:
+        shap_explainer = None
+        print(f"[SHAP] FAILED | {type(exc).__name__}: {exc}")
+
 
 def compute_feature_contributions(sample_idx):
     """Compute exact linear contributions: logistic_weight * scaled_feature_value."""
@@ -294,31 +335,76 @@ def compute_feature_contributions(sample_idx):
     return np.asarray(FEATURE_NAMES), contributions, probs
 
 
-def compute_decision_summary(sample_idx):
-    """Compute logit, probability and grouped contributions for the decision panel."""
+def compute_feature_attributions(sample_idx):
+    """Compute per-feature attributions and additive baseline for one sample."""
+    sample_features = X_train[sample_idx:sample_idx + 1]
+    probs = model.predict_proba(sample_features)[0]
+    logit = float(model.decision_function(sample_features)[0])
+
+    if SHAP_AVAILABLE and shap_explainer is not None:
+        try:
+            sample_scaled = model.named_steps["scaler"].transform(sample_features)
+            explanation = shap_explainer(sample_scaled)
+            attributions = np.asarray(explanation.values).reshape(-1)
+            base_value = float(np.asarray(explanation.base_values).reshape(-1)[0])
+            return {
+                "feature_names": np.asarray(FEATURE_NAMES),
+                "attributions": attributions,
+                "base_value": base_value,
+                "probs": probs,
+                "logit": logit,
+                "method": "shap-logodds",
+            }
+        except Exception as exc:
+            print(f"[SHAP] sample explain failed | {type(exc).__name__}: {exc}")
+
     feature_names, contributions, probs = compute_feature_contributions(sample_idx)
     if feature_names is None:
         return None
-    intercept = model.named_steps['clf'].intercept_[0]
-    logit = float(np.sum(contributions) + intercept)
+
+    intercept = float(model.named_steps["clf"].intercept_[0])
+    return {
+        "feature_names": feature_names,
+        "attributions": contributions,
+        "base_value": intercept,
+        "probs": probs,
+        "logit": logit,
+        "method": "linear-fallback",
+    }
+
+
+def compute_decision_summary(sample_idx):
+    """Compute logit, probability and grouped contributions for the decision panel."""
+    attribution_data = compute_feature_attributions(sample_idx)
+    if attribution_data is None:
+        return None
+
+    feature_names = attribution_data["feature_names"]
+    attributions = attribution_data["attributions"]
+    base_value = float(attribution_data["base_value"])
+    probs = attribution_data["probs"]
+    logit = float(attribution_data["logit"])
     pred_prob = float(probs[1])
     pred_class = int(np.argmax(probs))
+
     pos_pairs = sorted(
-        [(feature_names[i], float(contributions[i])) for i in range(len(feature_names)) if contributions[i] > 0],
+        [(feature_names[i], float(attributions[i])) for i in range(len(feature_names)) if attributions[i] > 0],
         key=lambda x: -x[1],
     )
     neg_pairs = sorted(
-        [(feature_names[i], float(contributions[i])) for i in range(len(feature_names)) if contributions[i] < 0],
+        [(feature_names[i], float(attributions[i])) for i in range(len(feature_names)) if attributions[i] < 0],
         key=lambda x: x[1],
     )
     return {
         "logit": logit,
+        "base_value": base_value,
         "pred_prob": pred_prob,
         "pred_class": pred_class,
         "for_seizure": pos_pairs,
         "against_seizure": neg_pairs,
-        "contributions": contributions,
+        "attributions": attributions,
         "feature_names": feature_names,
+        "method": attribution_data["method"],
     }
 
 
@@ -338,7 +424,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
     bg_color = "#fef2f2" if summary["pred_class"] == 1 else "#eff6ff"
     border_color = "#fca5a5" if summary["pred_class"] == 1 else "#93c5fd"
     logit = summary["logit"]
+    base_value = summary["base_value"]
     pred_prob = summary["pred_prob"]
+    method_text = "SHAP" if summary.get("method") == "shap-logodds" else "Linear"
 
     # 1. Decision header
     decision_header = html.Div([
@@ -346,7 +434,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         html.Span("Prediction: ", style={"fontSize": "10px", "color": "#6b7280"}),
         html.Span(pred_label, style={"fontWeight": "700", "fontSize": "11px", "color": pred_color}),
         html.Span(f"  P(seizure): {pred_prob:.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  Base: {base_value:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Score: {logit:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  Method: {method_text}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
     ], style={
         "backgroundColor": bg_color,
         "border": f"1px solid {border_color}",
@@ -390,9 +480,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         fidx = fnames.index(selected_feature) if selected_feature in fnames else None
         contrib_text = ""
         if fidx is not None:
-            v = float(summary["contributions"][fidx])
+            v = float(summary["attributions"][fidx])
             direction = "toward seizure" if v >= 0 else "toward non-seizure"
-            contrib_text = f"  Contribution: {v:+.4f} ({direction})."
+            contrib_text = f"  Attribution: {v:+.4f} ({direction})."
         reflection = html.Div([
             html.Span("Inspecting: ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
             html.Span(selected_feature, style={"fontWeight": "600", "fontSize": "10px", "color": "#7c3aed"}),
@@ -723,6 +813,8 @@ def initialize_active_learning():
         subjects_train[labeled_idx],
     )
 
+    initialize_shap_explainer()
+
     X_train_umap_model_dgrid = compute_model_umap_embedding()
 
     current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
@@ -901,22 +993,28 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
         sample_idx: Index of the sample to explain
         importance_mode: "contribution" or "uncertainty"
     """
-    feature_names, contributions, probs = compute_feature_contributions(sample_idx)
-    if feature_names is None:
+    attribution_data = compute_feature_attributions(sample_idx)
+    if attribution_data is None:
         # Model not trained yet
         return go.Figure().update_layout(
             title="Model not trained yet",
             template="plotly_white",
         )
 
-    pred_class = np.argmax(probs)
+    feature_names = attribution_data["feature_names"]
+    attributions = attribution_data["attributions"]
+    probs = attribution_data["probs"]
+    base_value = float(attribution_data["base_value"])
+    logit = float(attribution_data["logit"])
+    method = attribution_data["method"]
+
     pred_prob = probs[1]  # Probability of seizure
 
     if importance_mode == "contribution":
         # Sort by contribution value descending: most FOR seizure at top, AGAINST at bottom
-        sorted_indices = sorted(range(len(feature_names)), key=lambda i: contributions[i], reverse=True)
+        sorted_indices = sorted(range(len(feature_names)), key=lambda i: attributions[i], reverse=True)
         bar_names = [feature_names[i] for i in sorted_indices]
-        bar_vals = [float(contributions[i]) for i in sorted_indices]
+        bar_vals = [float(attributions[i]) for i in sorted_indices]
         colors = ['#dc2626' if v > 0 else '#2563eb' for v in bar_vals]
 
         fig = go.Figure()
@@ -958,14 +1056,22 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
             font=dict(size=8, color="#dc2626"),
         )
 
+        method_label = "SHAP log-odds" if method == "shap-logodds" else "Linear fallback"
+        fig.add_annotation(
+            text=f"{method_label} | Base={base_value:+.3f} | Logit={logit:+.3f} | P(seizure)={pred_prob:.3f}",
+            xref="paper", yref="paper", x=0.5, y=-0.16,
+            showarrow=False,
+            font=dict(size=8, color="#475569"),
+        )
+
 
     else:  # uncertainty mode
         # Uncertainty Explanation View
-        positive_mask = contributions > 0
-        negative_mask = contributions < 0
+        positive_mask = attributions > 0
+        negative_mask = attributions < 0
 
-        pos_contributions = contributions[positive_mask]
-        neg_contributions = contributions[negative_mask]
+        pos_contributions = attributions[positive_mask]
+        neg_contributions = attributions[negative_mask]
         pos_features = [feature_names[i] for i in range(len(feature_names)) if positive_mask[i]]
         neg_features = [feature_names[i] for i in range(len(feature_names)) if negative_mask[i]]
 
@@ -2067,6 +2173,8 @@ def update_dashboard(
                 subjects_train[labeled_idx],
             )
 
+            initialize_shap_explainer()
+
             X_train_umap_model_dgrid = compute_model_umap_embedding()
 
             # Compute metrics BEFORE setting phase back to annotation
@@ -2327,17 +2435,19 @@ def update_dashboard(
 
     clinical_explanation = "Click a feature bar to inspect clinically relevant EEG evidence."
     if selected_feature:
-        feature_names, contributions, _ = compute_feature_contributions(feature_sample_idx)
+        attribution_data = compute_feature_attributions(feature_sample_idx)
         contribution_value = None
-        if feature_names is not None:
+        if attribution_data is not None:
+            feature_names = attribution_data["feature_names"]
+            attributions = attribution_data["attributions"]
             feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
             if selected_feature in feature_to_idx:
-                contribution_value = float(contributions[feature_to_idx[selected_feature]])
+                contribution_value = float(attributions[feature_to_idx[selected_feature]])
 
         if contribution_value is not None:
             direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
             clinical_explanation = (
-                f"{selected_feature}: contribution={contribution_value:+.4f} ({direction_text}). "
+                f"{selected_feature}: attribution={contribution_value:+.4f} ({direction_text}). "
                 f"{get_clinical_feature_explanation(selected_feature)}"
             )
         else:
