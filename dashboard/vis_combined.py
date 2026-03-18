@@ -1807,10 +1807,9 @@ app.layout = html.Div([
                     dcc.RadioItems(
                         id="embedding-space-mode",
                         options=[
-                            {"label": " Data UMAP", "value": "data"},
                             {"label": " Model UMAP", "value": "model"},
                         ],
-                        value="data",
+                        value="model",
                         inline=True,
                         style={"fontSize": "9px", "marginRight": "8px"},
                     ),
