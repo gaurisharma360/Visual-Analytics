@@ -1,0 +1,107 @@
+/* NeuroLens Dashboard Layout Fixes */
+
+/* App shell - ensure no overflow */
+.app-shell {
+    overflow: hidden !important;
+}
+
+/* Ensure all viz panels don't overflow */
+.viz-panel {
+    overflow: hidden !important;
+}
+
+/* Graph containers should fill available space */
+.viz-panel [data-dash-is="Graph"] {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Radio controls should not wrap excessively */
+.radio-controls {
+    flex-wrap: wrap !important;
+}
+
+.control-row {
+    font-size: 12px !important;
+    gap: 8px !important;
+}
+
+/* Button group should not wrap in single line if needed */
+.button-group {
+    flex-wrap: wrap !important;
+}
+
+/* Top bar should compress nicely */
+.top-bar {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+}
+
+/* KPI grid should be responsive */
+.kpi-grid {
+    gap: 6px !important;
+    grid-auto-rows: minmax(20px, auto) !important;
+}
+
+/* Main workspace grid */
+.workspace-grid {
+    gap: 6px !important;
+}
+
+/* Left and right columns should take equal space */
+.left-column,
+.right-column {
+    gap: 6px !important;
+    overflow: hidden !important;
+}
+
+/* Right row 1 (uncertainty + learning) */
+.right-row1 {
+    gap: 6px !important;
+}
+
+/* Prevent Plotly modebar from overlapping */
+.plotly-graph-div .modebar {
+    position: relative !important;
+}
+
+/* Ensure Dash components don't exceed parent bounds */
+[data-dash-is="Graph"] {
+    min-height: 150px !important;
+}
+
+/* Slider container */
+.dcc_control > .rc-slider {
+    width: 100% !important;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 1024px) {
+    .workspace-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .right-row1 {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* Prevent text overflow in headers */
+.viz-panel h3 {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+/* Ensure flex grow works properly */
+.viz-panel {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+
+/* Fix clinical explanation box sizing */
+#clinical-explanation {
+    overflow-y: auto !important;
+    max-height: 70px !important;
+}
+

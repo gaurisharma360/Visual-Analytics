@@ -2071,7 +2071,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="pca-embedding", style={"height": "calc(100% - 55px)", "minHeight": "260px"},
+                dcc.Graph(id="pca-embedding", style={"flex": "1 1 auto", "minHeight": "200px"},
                       config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
                     dcc.RadioItems(
@@ -2116,11 +2116,12 @@ app.layout = html.Div([
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
+                "overflow": "hidden",
             }, className="viz-panel"),
 
             html.Div([
                 html.H3("Annotation Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"height": "calc(100% - 22px)", "minHeight": "340px"}, config={'responsive': True, 'displayModeBar': 'hover'}),
+                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"}, config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div(
                     id="clinical-explanation",
                     style={
@@ -2132,6 +2133,8 @@ app.layout = html.Div([
                         "borderRadius": "6px",
                         "padding": "6px",
                         "lineHeight": "1.35",
+                        "overflow": "auto",
+                        "maxHeight": "60px",
                     },
                 ),
             ], style={
@@ -2144,6 +2147,7 @@ app.layout = html.Div([
                 "padding": "4px",
                 "display": "flex",
                 "flexDirection": "column",
+                "overflow": "hidden",
             }, className="viz-panel"),
         ], className="left-column", style={
             "display": "flex",
@@ -2158,7 +2162,7 @@ app.layout = html.Div([
             html.Div([
                 html.Div([
                     html.H3("Uncertainty", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                    dcc.Graph(id="uncertainty-histogram", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
+                    dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
                 ], style={
                     "minWidth": "0",
                     "minHeight": "0",
@@ -2168,11 +2172,12 @@ app.layout = html.Div([
                     "padding": "5px",
                     "display": "flex",
                     "flexDirection": "column",
+                    "overflow": "hidden",
                 }, className="viz-panel"),
 
                 html.Div([
                     html.H3("Learning", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                    dcc.Graph(id="learning-curve", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
+                    dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
                 ], style={
                     "minWidth": "0",
                     "minHeight": "0",
@@ -2182,21 +2187,23 @@ app.layout = html.Div([
                     "padding": "5px",
                     "display": "flex",
                     "flexDirection": "column",
+                    "overflow": "hidden",
                 }, className="viz-panel"),
             ], className="right-row1", style={
                 "display": "grid",
-                "gridTemplateColumns": "1fr 1.5fr",
-                "gap": "4px",
+                "gridTemplateColumns": "1fr 1.2fr",
+                "gap": "6px",
                 "alignItems": "stretch",
                 "minHeight": "0",
-                "flex": "1 1 0",
+                "flex": "0 0 auto",
+                "height": "45%",
             }),
 
             html.Div([
                 html.H3("Prediction Flow Across Rounds", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"height": "calc(100% - 22px)", "minHeight": "260px"}, config={'responsive': True}),
+                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
             ], style={
-                "flex": "1 1 0",
+                "flex": "1 1 auto",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
@@ -2205,6 +2212,7 @@ app.layout = html.Div([
                 "padding": "4px",
                 "display": "flex",
                 "flexDirection": "column",
+                "overflow": "hidden",
             }, className="viz-panel"),
 
             html.Div([
@@ -2213,7 +2221,7 @@ app.layout = html.Div([
                 html.Div(id="feature-balance-bar"),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"height": "calc(100% - 120px)", "minHeight": "200px"},
+                    style={"flex": "1 1 auto", "minHeight": "150px"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
@@ -2222,7 +2230,7 @@ app.layout = html.Div([
                 ),
                 html.Div(id="feature-reflection-text"),
             ], style={
-                "flex": "1 1 0",
+                "flex": "1 1 auto",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
@@ -2231,14 +2239,16 @@ app.layout = html.Div([
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
+                "overflow": "hidden",
             }, className="viz-panel"),
         ], className="right-column", style={
             "display": "flex",
             "flexDirection": "column",
-            "gap": "4px",
+            "gap": "6px",
             "minWidth": "0",
             "minHeight": "0",
             "height": "100%",
+            "overflow": "hidden",
         }),
     ], className="main-workspace workspace-grid", style={
         "display": "grid",
@@ -2561,7 +2571,9 @@ def update_dashboard(
     pending_queue = max(0, len(annotation_queue) - current_pointer)
 
     # NEW: EEG graph shows selected sample or queue preview
+    eeg_sample_available = False
     if selected_sample_id is not None:
+        eeg_sample_available = True
         current_sample_idx = selected_sample_id
         raw_signal = X_raw_train[selected_sample_id]
 
@@ -2652,6 +2664,7 @@ def update_dashboard(
         )
 
     elif pending_queue > 0:
+        eeg_sample_available = True
         preview_idx = int(annotation_queue[current_pointer])
         eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[preview_idx], mode="lines")])
         eeg_fig.update_layout(
@@ -2727,51 +2740,61 @@ def update_dashboard(
     )
     uncertainty_hist = build_uncertainty_histogram(current_confidence_threshold)
 
-    # Build feature importance for current sample
+    # Keep feature contributions hidden unless the EEG panel is actively showing a sample.
     importance_mode = "contribution"
-    feature_sample_idx = 0
-    if selected_sample_id is not None:
-        feature_sample_idx = int(selected_sample_id)
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
-    elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
-        feature_sample_idx = int(annotation_queue[current_pointer])
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
-    elif len(labeled_idx) > 0:
-        feature_sample_idx = int(labeled_idx[-1])
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
-    else:
-        feature_fig = build_feature_importance(0, importance_mode, selected_features)
-
     selected_feature = selected_features[-1] if selected_features else None
 
-    clinical_explanation = "Click one or more feature bars to inspect clinically relevant EEG evidence."
-    if selected_features:
-        attribution_data = compute_feature_attributions(feature_sample_idx)
-        contribution_value = None
-        if attribution_data is not None:
-            feature_names = attribution_data["feature_names"]
-            attributions = attribution_data["attributions"]
-            feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
-            if selected_feature in feature_to_idx:
-                contribution_value = float(attributions[feature_to_idx[selected_feature]])
-
-        if contribution_value is not None:
-            direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
-            clinical_explanation = (
-                f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                f"Focus: {selected_feature} attribution={contribution_value:+.4f} ({direction_text}). "
-                f"{get_clinical_feature_explanation(selected_feature)}"
-            )
+    if eeg_sample_available:
+        if selected_sample_id is not None:
+            feature_sample_idx = int(selected_sample_id)
         else:
-            clinical_explanation = (
-                f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                f"Focus: {selected_feature}. {get_clinical_feature_explanation(selected_feature)}"
-            )
+            feature_sample_idx = int(annotation_queue[current_pointer])
 
-    # Generate decision panel content for Feature Importance panel
-    feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
-        feature_sample_idx, selected_feature
-    )
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
+
+        clinical_explanation = "Click one or more feature bars to inspect clinically relevant EEG evidence."
+        if selected_features:
+            attribution_data = compute_feature_attributions(feature_sample_idx)
+            contribution_value = None
+            if attribution_data is not None:
+                feature_names = attribution_data["feature_names"]
+                attributions = attribution_data["attributions"]
+                feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
+                if selected_feature in feature_to_idx:
+                    contribution_value = float(attributions[feature_to_idx[selected_feature]])
+
+            if contribution_value is not None:
+                direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
+                clinical_explanation = (
+                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
+                    f"Focus: {selected_feature} attribution={contribution_value:+.4f} ({direction_text}). "
+                    f"{get_clinical_feature_explanation(selected_feature)}"
+                )
+            else:
+                clinical_explanation = (
+                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
+                    f"Focus: {selected_feature}. {get_clinical_feature_explanation(selected_feature)}"
+                )
+
+        # Generate decision panel content for Feature Importance panel
+        feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+            feature_sample_idx, selected_feature
+        )
+    else:
+        feature_fig = go.Figure()
+        feature_fig.update_layout(
+            title="No sample selected or in queue",
+            template="plotly_white",
+            height=260,
+            margin=dict(l=120, r=14, t=22, b=44),
+        )
+        clinical_explanation = "No EEG sample is currently displayed. Select a sample to view feature contributions."
+        feature_decision_header = html.Span(
+            "Select or queue a sample to see decision insights.",
+            style={"fontSize": "10px", "color": "#94a3b8"},
+        )
+        feature_balance_bar = ""
+        feature_reflection_text = ""
 
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
