@@ -235,22 +235,22 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
         return score >= threshold
 
     if feature_name == "Delta Power":
-        # Highlight slow oscillations (0.5-4 Hz)
+        # Highlight slow oscillations (0.5-4 Hz).
         filtered = bandpass_filter(signal, 0.5, 4, fs)
         return filtered, "Delta band (0.5-4 Hz)", None
 
     elif feature_name == "Theta Power":
-        # Highlight 4-8 Hz oscillations
+        # Highlight 4-8 Hz oscillations.
         filtered = bandpass_filter(signal, 4, 8, fs)
         return filtered, "Theta band (4-8 Hz)", None
 
     elif feature_name == "Alpha Power":
-        # Highlight 8-13 Hz oscillations
+        # Highlight 8-13 Hz oscillations.
         filtered = bandpass_filter(signal, 8, 13, fs)
         return filtered, "Alpha band (8-13 Hz)", None
 
     elif feature_name == "Beta Power":
-        # Highlight 13-30 Hz oscillations
+        # Highlight 13-30 Hz oscillations.
         filtered = bandpass_filter(signal, 13, 30, fs)
         return filtered, "Beta band (13-30 Hz)", None
 
@@ -280,9 +280,10 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
         return local_skew, "Asymmetric waveform segments", skew_mask
 
     elif feature_name == "Mean":
-        # Show baseline shifts
+        # Highlight strongest baseline-shift regions.
         baseline = uniform_filter1d(signal, size=int(fs))
-        return baseline, "Baseline trend", None
+        baseline_shift = np.abs(signal - baseline)
+        return baseline_shift, "Baseline-shift regions", _top_mask(baseline_shift, pct=80)
 
     else:
         return signal, "Raw signal", None
@@ -293,6 +294,23 @@ FEATURE_NAMES = [
     "Skewness", "Kurtosis",
     "Delta Power", "Theta Power", "Alpha Power", "Beta Power",
 ]
+
+FEATURE_HIGHLIGHT_PALETTE = [
+    "#f59e0b",  # amber
+    "#10b981",  # emerald
+    "#8b5cf6",  # violet
+    "#ef4444",  # red
+    "#0ea5e9",  # sky
+    "#f97316",  # orange
+    "#14b8a6",  # teal
+    "#e11d48",  # rose
+    "#22c55e",  # green
+    "#6366f1",  # indigo
+]
+FEATURE_HIGHLIGHT_COLORS = {
+    name: FEATURE_HIGHLIGHT_PALETTE[i % len(FEATURE_HIGHLIGHT_PALETTE)]
+    for i, name in enumerate(FEATURE_NAMES)
+}
 
 shap_explainer = None
 
@@ -610,7 +628,12 @@ def train_model(X_train, y_train, subjects_train):
 
 X_raw_train, X_train, X_test, y_train, y_test, subjects_train = load_and_split()
 
-initial_fraction = 0.2
+# Keep EEG annotation panel on a consistent amplitude scale across samples.
+# Use robust percentile bounds to avoid extreme outliers dominating the axis.
+GLOBAL_Y_MIN = float(np.percentile(X_raw_train, 1))
+GLOBAL_Y_MAX = float(np.percentile(X_raw_train, 99))
+
+initial_fraction = 0.1
 batch_size = 10
 default_confidence_threshold = 0.7
 
@@ -717,6 +740,8 @@ pool_auto_count = 0
 current_confidence_threshold = default_confidence_threshold
 annotations_this_round = 0
 previous_predictions = None
+prediction_history = []
+sankey_fig_cache = None
 stable_rounds = 0
 stop_active_learning = False
 
@@ -784,7 +809,7 @@ def initialize_active_learning():
     global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
     global annotations_this_round
-    global previous_predictions, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, sankey_fig_cache, stable_rounds, stop_active_learning
 
     train_history = []
     test_history = []
@@ -823,6 +848,8 @@ def initialize_active_learning():
     selected_sample_id = None
     annotations_this_round = 0
     previous_predictions = model.predict(X_train)
+    prediction_history = [previous_predictions.copy()]
+    sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
     stable_rounds = 0
     stop_active_learning = False
 
@@ -917,6 +944,214 @@ def build_confusion_heatmap(cm):
     return fig
 
 
+def build_sankey_confusion(y_true, y_pred):
+    """Build a Sankey diagram showing true-to-predicted class flow with class-normalized values."""
+    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+
+    # Normalize within class to handle imbalance
+    total_non_seizure = tn + fp + 1e-6
+    total_seizure = tp + fn + 1e-6
+    
+    tn_normalized = tn / total_non_seizure
+    fp_normalized = fp / total_non_seizure
+    fn_normalized = fn / total_seizure
+    tp_normalized = tp / total_seizure
+
+    labels = [
+        "True: Non-Seizure",
+        "True: Seizure",
+        "Pred: Non-Seizure",
+        "Pred: Seizure",
+    ]
+
+    source = [0, 0, 1, 1]
+    target = [2, 3, 2, 3]
+    values = [tn_normalized, fp_normalized, fn_normalized, tp_normalized]
+    colors = ["#2563eb", "#ef4444", "#f97316", "#22c55e"]
+    
+    # Create hover text with label, count, and percentage
+    hover_text = [
+        f"TN (True Negative)<br>Count: {tn}<br>Rate: {tn_normalized:.1%}",
+        f"FP (False Positive)<br>Count: {fp}<br>Rate: {fp_normalized:.1%}",
+        f"FN (False Negative)<br>Count: {fn}<br>Rate: {fn_normalized:.1%}",
+        f"TP (True Positive)<br>Count: {tp}<br>Rate: {tp_normalized:.1%}",
+    ]
+
+    fig = go.Figure(
+        go.Sankey(
+            arrangement="snap",
+            node=dict(
+                pad=20,
+                thickness=25,
+                line=dict(color="black", width=0.5),
+                label=labels,
+                color=["#1e40af", "#991b1b", "#1e40af", "#991b1b"],
+            ),
+            link=dict(
+                source=source,
+                target=target,
+                value=values,
+                color=colors,
+                customdata=hover_text,
+                hovertemplate="%{customdata}<extra></extra>",
+            ),
+            hoverlabel=dict(
+                font=dict(color="#ffffff"),
+                bgcolor="#111827",
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title=None,
+        font=dict(size=11, color="#000000"),
+        margin=dict(l=20, r=20, t=30, b=20),
+        template="plotly_white",
+        autosize=True,
+    )
+
+    return fig
+
+
+def build_multiround_sankey(pred_history, y_true):
+    """Build Sankey showing TN/FP/FN/TP transitions across rounds with class-normalized flows."""
+    if pred_history is None or len(pred_history) == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title=None,
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=30, b=20),
+            annotations=[
+                dict(
+                    text="Train more rounds to see prediction flow.",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                    font=dict(size=12, color="#ffffff"),
+                )
+            ],
+        )
+        return fig
+
+    if len(pred_history) == 1:
+        # Round 0 only: show the initially computed flow.
+        return build_sankey_confusion(y_true, np.asarray(pred_history[0]))
+
+    y_true = np.asarray(y_true)
+    total_non_seizure = max(int(np.sum(y_true == 0)), 1)
+    total_seizure = max(int(np.sum(y_true == 1)), 1)
+    sample_weights = np.where(y_true == 0, 1.0 / total_non_seizure, 1.0 / total_seizure)
+
+    category_code = {
+        (0, 0): "TN",
+        (0, 1): "FP",
+        (1, 0): "FN",
+        (1, 1): "TP",
+    }
+    category_color = {
+        (0, 0): "#2563eb",
+        (0, 1): "#ef4444",
+        (1, 0): "#f97316",
+        (1, 1): "#22c55e",
+    }
+
+    labels = []
+    node_keys = []
+    node_map = {}
+    source = []
+    target = []
+    values = []
+    link_colors = []
+    hover_text = []
+    flow_index = {}
+    flow_counts = []
+
+    def get_node(round_idx, true_label, pred_label):
+        key = (round_idx, true_label, pred_label)
+        if key not in node_map:
+            node_map[key] = len(labels)
+            labels.append(f"R{round_idx} {category_code[(true_label, pred_label)]}")
+            node_keys.append(key)
+        return node_map[key]
+
+    for r in range(len(pred_history) - 1):
+        prev = np.asarray(pred_history[r]).astype(int)
+        curr = np.asarray(pred_history[r + 1]).astype(int)
+
+        for i in range(len(y_true)):
+            true_label = int(y_true[i])
+            prev_pred = int(prev[i])
+            curr_pred = int(curr[i])
+            src = get_node(r, true_label, prev_pred)
+            dst = get_node(r + 1, true_label, curr_pred)
+            key = (src, dst)
+
+            if key not in flow_index:
+                flow_index[key] = len(source)
+                source.append(src)
+                target.append(dst)
+                values.append(float(sample_weights[i]))
+                flow_counts.append(1)
+            else:
+                idx = flow_index[key]
+                values[idx] += float(sample_weights[i])
+                flow_counts[idx] += 1
+
+    for idx, (src, dst) in enumerate(zip(source, target)):
+        dst_key = node_keys[dst]
+        dst_category = (dst_key[1], dst_key[2])
+        count = flow_counts[idx]
+        norm_rate = values[idx]
+
+        link_colors.append(category_color[dst_category])
+        hover_text.append(
+            f"<br>Count: {count}"
+            f"<br>Normalized: {norm_rate:.1%}"
+        )
+
+    node_colors = [category_color[(k[1], k[2])] for k in node_keys]
+
+    fig = go.Figure(
+        go.Sankey(
+            arrangement="snap",
+            node=dict(
+                label=labels,
+                pad=20,
+                thickness=25,
+                line=dict(color="black", width=0.5),
+                color=node_colors,
+            ),
+            link=dict(
+                source=source,
+                target=target,
+                value=values,
+                color=link_colors,
+                customdata=hover_text,
+                hovertemplate="%{customdata}<extra></extra>",
+            ),
+            hoverlabel=dict(
+                font=dict(color="#ffffff"),
+                bgcolor="#111827",
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title=None,
+        font=dict(size=11, color="#000000"),
+        margin=dict(l=20, r=20, t=30, b=20),
+        template="plotly_white",
+        autosize=True,
+    )
+
+    return fig
+
+
 def build_data_donut():
     labeled = len(labeled_idx)
     doctor = len(current_batch)
@@ -985,7 +1220,7 @@ def _build_embedding_boundary_trace(embedding_coords):
     )
 
 
-def build_feature_importance(sample_idx, importance_mode="contribution"):
+def build_feature_importance(sample_idx, importance_mode="contribution", selected_features=None):
     """
     Build feature importance visualization for a specific sample.
 
@@ -1010,19 +1245,30 @@ def build_feature_importance(sample_idx, importance_mode="contribution"):
 
     pred_prob = probs[1]  # Probability of seizure
 
+    selected_set = set(selected_features or [])
+
     if importance_mode == "contribution":
         # Sort by contribution value descending: most FOR seizure at top, AGAINST at bottom
         sorted_indices = sorted(range(len(feature_names)), key=lambda i: attributions[i], reverse=True)
         bar_names = [feature_names[i] for i in sorted_indices]
         bar_vals = [float(attributions[i]) for i in sorted_indices]
-        colors = ['#dc2626' if v > 0 else '#2563eb' for v in bar_vals]
+        colors = []
+        border_widths = []
+        for i in sorted_indices:
+            fname = feature_names[i]
+            val = float(attributions[i])
+            colors.append('#dc2626' if val > 0 else '#2563eb')
+            border_widths.append(3 if fname in selected_set else 0)
 
         fig = go.Figure()
         fig.add_trace(go.Bar(
             y=bar_names,
             x=bar_vals,
             orientation='h',
-            marker=dict(color=colors),
+            marker=dict(
+                color=colors,
+                line=dict(width=border_widths, color="#111827"),
+            ),
             hovertemplate="%{y}: %{x:.4f}<extra></extra>",
         ))
 
@@ -1651,6 +1897,7 @@ app.layout = html.Div([
     dcc.Location(id="url", refresh=True),
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
+    dcc.Store(id="selected-features-store", data=[]),  # Multi-select feature state
 
     # Top bar with NEW buttons from gauri's version
     html.Div([
@@ -1723,6 +1970,22 @@ app.layout = html.Div([
                     "marginLeft": "8px",
                     "backgroundColor": "#7c3aed",
                     "color": "white",
+                    "border": "none",
+                    "borderRadius": "8px",
+                    "padding": "8px 12px",
+                    "fontWeight": "600",
+                    "cursor": "pointer",
+                    "fontSize": "clamp(10px, 1.2vw, 13px)",
+                    "whiteSpace": "nowrap",
+                },
+            ),
+            html.Button(
+                "Clear Features",
+                id="clear-features-btn",
+                style={
+                    "marginLeft": "8px",
+                    "backgroundColor": "#f59e0b",
+                    "color": "#111827",
                     "border": "none",
                     "borderRadius": "8px",
                     "padding": "8px 12px",
@@ -1908,8 +2171,8 @@ app.layout = html.Div([
                 }, className="viz-panel"),
 
                 html.Div([
-                    html.H3("Confusion Matrix", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                    dcc.Graph(id="confusion-heatmap", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
+                    html.H3("Learning", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                    dcc.Graph(id="learning-curve", style={"height": "calc(100% - 28px)", "minHeight": "260px"}, config={'responsive': True}),
                 ], style={
                     "minWidth": "0",
                     "minHeight": "0",
@@ -1922,7 +2185,7 @@ app.layout = html.Div([
                 }, className="viz-panel"),
             ], className="right-row1", style={
                 "display": "grid",
-                "gridTemplateColumns": "1.35fr 0.65fr",
+                "gridTemplateColumns": "1fr 1.5fr",
                 "gap": "4px",
                 "alignItems": "stretch",
                 "minHeight": "0",
@@ -1930,8 +2193,8 @@ app.layout = html.Div([
             }),
 
             html.Div([
-                html.H3("Learning", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="learning-curve", style={"height": "calc(100% - 22px)", "minHeight": "260px"}, config={'responsive': True}),
+                html.H3("Prediction Flow Across Rounds", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="confusion-heatmap", style={"height": "calc(100% - 22px)", "minHeight": "260px"}, config={'responsive': True}),
             ], style={
                 "flex": "1 1 0",
                 "minWidth": "0",
@@ -2020,9 +2283,37 @@ app.layout = html.Div([
 # ==========================================================
 
 @app.callback(
+    Output("selected-features-store", "data"),
+    Input("feature-importance", "clickData"),
+    Input("clear-features-btn", "n_clicks"),
+    Input("reset-btn", "n_clicks"),
+    State("selected-features-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_features):
+    """Toggle feature selection on bar click and clear via button/reset."""
+    selected_features = list(selected_features or [])
+
+    ctx = dash.callback_context
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
+    if trigger_id in {"clear-features-btn", "reset-btn"}:
+        return []
+
+    if trigger_id == "feature-importance" and click_data and "points" in click_data:
+        feature = click_data["points"][0].get("y")
+        if feature in selected_features:
+            selected_features.remove(feature)
+        elif feature in FEATURE_NAMES:
+            selected_features.append(feature)
+
+    return selected_features
+
+@app.callback(
     Output("eeg-graph", "figure"),
     Output("annotate-btn", "disabled"),
     Output("train-btn", "disabled"),
+    Output("confidence-slider", "disabled"),
     Output("confidence-value", "children"),
     Output("status-message", "children"),
     Output("learning-curve", "figure"),
@@ -2050,7 +2341,7 @@ app.layout = html.Div([
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
-    Input("feature-importance", "clickData"),  # Immediate feature click
+    Input("selected-features-store", "data"),
     prevent_initial_call=False,
 )
 def update_dashboard(
@@ -2064,7 +2355,7 @@ def update_dashboard(
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
-        feature_click_data,
+        selected_features_store,
 ):
     global labeled_idx, unlabeled_idx
     global current_batch, current_pointer
@@ -2074,10 +2365,11 @@ def update_dashboard(
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
     global annotations_this_round
-    global previous_predictions, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, sankey_fig_cache, stable_rounds, stop_active_learning
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+    selected_features = list(selected_features_store or [])
 
     if trigger_id in ["url", "reset-btn"]:
         initialize_active_learning()
@@ -2115,12 +2407,21 @@ def update_dashboard(
                 status_message = f"Loaded {len(annotation_queue)} samples needing doctor annotation."
 
     if trigger_id == "confidence-slider":
-        current_confidence_threshold = confidence_value
-        current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
         if phase == "annotation":
-            status_message = "Confidence updated"
+            current_confidence_threshold = confidence_value
+            current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
+
+            # Keep queue consistent with the latest threshold policy.
+            annotation_queue = [int(idx) for idx in current_batch]
+            current_pointer = 0
+            if len(annotation_queue) > 0:
+                selected_sample_id = int(annotation_queue[0])
+                status_message = "Confidence updated (annotation phase). Queue refreshed."
+            else:
+                selected_sample_id = None
+                status_message = "Confidence updated (annotation phase). No doctor samples at this threshold."
         else:
-            status_message = "Confidence updated and reflected in all visualizations"
+            status_message = "Cannot change confidence after training. Continue to next annotation phase or reset."
 
     # NEW: Modified annotate logic to work with queue
     if trigger_id == "annotate-btn" and phase == "annotation":
@@ -2209,10 +2510,11 @@ def update_dashboard(
 
             # Hybrid stopping: no uncertain doctor samples + stable predictions.
             current_predictions = model.predict(X_train)
+            previous_round_predictions = previous_predictions.copy() if previous_predictions is not None else None
             flips = 0
             flip_ratio = 0.0
-            if previous_predictions is not None:
-                flips = int(np.sum(current_predictions != previous_predictions))
+            if previous_round_predictions is not None:
+                flips = int(np.sum(current_predictions != previous_round_predictions))
                 flip_ratio = flips / float(len(current_predictions))
 
             if len(current_batch) == 0 and flip_ratio < stability_flip_ratio_threshold:
@@ -2221,6 +2523,7 @@ def update_dashboard(
                 stable_rounds = 0
 
             previous_predictions = current_predictions.copy()
+            prediction_history.append(current_predictions.copy())
 
             if stable_rounds >= stability_required_rounds and len(current_batch) == 0:
                 stop_active_learning = True
@@ -2273,68 +2576,67 @@ def update_dashboard(
             showlegend=True,
         ))
 
-        # Extract selected feature from clickData directly
-        if feature_click_data and "points" in feature_click_data:
-            selected_feature = feature_click_data["points"][0].get("y", None)
-        else:
-            selected_feature = None
+        # Multi-select feature overlays in EEG panel.
+        feature_descriptions = []
+        if selected_features:
+            for feature in selected_features:
+                try:
+                    highlighted_signal, description, highlight_mask = highlight_feature_in_eeg(raw_signal, feature)
+                    feature_color = FEATURE_HIGHLIGHT_COLORS.get(feature, "#f59e0b")
 
-        # If a feature is selected, highlight the corresponding evidence
-        if selected_feature:
-            try:
-                highlighted_signal, description, highlight_mask = highlight_feature_in_eeg(raw_signal, selected_feature)
+                    if feature in ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]:
+                        eeg_fig.add_trace(go.Scatter(
+                            y=highlighted_signal,
+                            mode="lines",
+                            line=dict(color=feature_color, width=2),
+                            name=f"{feature}",
+                            showlegend=True,
+                            opacity=0.75,
+                        ))
 
-                # For frequency bands, overlay the filtered signal
-                if selected_feature in ["Delta Power", "Theta Power", "Alpha Power", "Beta Power"]:
-                    eeg_fig.add_trace(go.Scatter(
-                        y=highlighted_signal,
-                        mode="lines",
-                        line=dict(color='#ef4444', width=2, dash='solid'),
-                        name=f"{selected_feature} ({description})",
-                        showlegend=True,
-                        opacity=0.8,
-                    ))
+                    if highlight_mask is not None and np.any(highlight_mask):
+                        eeg_fig.add_trace(go.Scatter(
+                            y=np.where(highlight_mask, raw_signal, np.nan),
+                            mode="lines",
+                            line=dict(color=feature_color, width=3),
+                            name=f"{feature} regions",
+                            showlegend=True,
+                            opacity=0.9,
+                        ))
 
-                # For shape/baseline features, show processed evidence trace.
-                elif selected_feature in ["Kurtosis", "Skewness", "Mean"]:
-                    eeg_fig.add_trace(go.Scatter(
-                        y=highlighted_signal,
-                        mode="lines",
-                        line=dict(color='#f59e0b', width=1.5, dash='dot'),
-                        name=f"{description}",
-                        showlegend=True,
-                        opacity=0.7,
-                    ))
+                        # For spike-oriented features, add marker points on peaks for clarity.
+                        if feature == "Kurtosis":
+                            eeg_fig.add_trace(go.Scatter(
+                                y=np.where(highlight_mask, raw_signal, np.nan),
+                                mode="markers",
+                                marker=dict(color=feature_color, size=6),
+                                name=f"{feature} spikes",
+                                showlegend=True,
+                                opacity=0.95,
+                            ))
 
-                # Overlay highlighted raw-signal regions for window/transient features.
-                if highlight_mask is not None and np.any(highlight_mask):
-                    eeg_fig.add_trace(go.Scatter(
-                        y=np.where(highlight_mask, raw_signal, np.nan),
-                        mode="lines",
-                        line=dict(color="#dc2626", width=2.5),
-                        name=f"{selected_feature} evidence",
-                        showlegend=True,
-                        opacity=0.9,
-                    ))
+                    feature_descriptions.append(f"{feature}: {description}")
 
+                except Exception as e:
+                    print(f"Error highlighting {feature}: {e}")
+
+            if feature_descriptions:
                 eeg_fig.add_annotation(
-                    text=f"[FEATURE] {selected_feature}: {description}",
+                    text="[FEATURES] " + " | ".join(feature_descriptions),
                     xref="paper", yref="paper",
                     x=0.5, y=1.05,
                     showarrow=False,
-                    font=dict(size=11, color="#ef4444"),
-                    bgcolor="#fef2f2",
-                    bordercolor="#ef4444",
+                    font=dict(size=10, color="#b45309"),
+                    bgcolor="#fffbeb",
+                    bordercolor="#f59e0b",
                     borderwidth=1,
                 )
 
-            except Exception as e:
-                print(f"Error highlighting feature: {e}")
-
         eeg_fig.update_layout(
-            title=f"Sample {selected_sample_id} | True Label: {'Seizure' if y_train[selected_sample_id] == 1 else 'Non-Seizure'}",
+            title=f"Sample {selected_sample_id}",
             xaxis_title="Time (samples)",
             yaxis_title="Amplitude (μV)",
+            yaxis=dict(range=[GLOBAL_Y_MIN, GLOBAL_Y_MAX]),
             template="plotly_white",
             margin=dict(l=50, r=20, t=60, b=50),
             autosize=True,
@@ -2354,6 +2656,7 @@ def update_dashboard(
         eeg_fig = go.Figure(data=[go.Scatter(y=X_raw_train[preview_idx], mode="lines")])
         eeg_fig.update_layout(
             title=f"Queue Preview: Sample {preview_idx}",
+            yaxis=dict(range=[GLOBAL_Y_MIN, GLOBAL_Y_MAX]),
             template="plotly_white",
             margin=dict(l=40, r=20, t=40, b=40),
             autosize=True,
@@ -2380,6 +2683,7 @@ def update_dashboard(
     ):
         annotate_disabled = False
     train_disabled = stop_active_learning or annotations_this_round == 0
+    confidence_slider_disabled = phase != "annotation"
 
     if pending_queue == 0 and phase == "annotation" and len(annotation_queue) == 0:
         status_message = "Queue empty. Load Top-K uncertain or click UMAP, then Annotate."
@@ -2407,8 +2711,12 @@ def update_dashboard(
         ):
             annotate_disabled = False
         train_disabled = stop_active_learning or annotations_this_round == 0
+        confidence_slider_disabled = phase != "annotation"
 
-    heatmap_fig = build_confusion_heatmap(cm)
+    sankey_output = dash.no_update
+    if trigger_id in [None, "url", "reset-btn", "train-btn"] or sankey_fig_cache is None:
+        sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
+        sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
 
     embedding_fig, embedding_type = build_embedding_figure(
@@ -2424,23 +2732,20 @@ def update_dashboard(
     feature_sample_idx = 0
     if selected_sample_id is not None:
         feature_sample_idx = int(selected_sample_id)
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
     elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
         feature_sample_idx = int(annotation_queue[current_pointer])
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
     elif len(labeled_idx) > 0:
         feature_sample_idx = int(labeled_idx[-1])
-        feature_fig = build_feature_importance(feature_sample_idx, importance_mode)
+        feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
     else:
-        feature_fig = build_feature_importance(0, importance_mode)
+        feature_fig = build_feature_importance(0, importance_mode, selected_features)
 
-    # Ensure selected_feature is always defined
-    selected_feature = None
-    if feature_click_data and "points" in feature_click_data:
-        selected_feature = feature_click_data["points"][0].get("y", None)
+    selected_feature = selected_features[-1] if selected_features else None
 
-    clinical_explanation = "Click a feature bar to inspect clinically relevant EEG evidence."
-    if selected_feature:
+    clinical_explanation = "Click one or more feature bars to inspect clinically relevant EEG evidence."
+    if selected_features:
         attribution_data = compute_feature_attributions(feature_sample_idx)
         contribution_value = None
         if attribution_data is not None:
@@ -2453,11 +2758,15 @@ def update_dashboard(
         if contribution_value is not None:
             direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
             clinical_explanation = (
-                f"{selected_feature}: attribution={contribution_value:+.4f} ({direction_text}). "
+                f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
+                f"Focus: {selected_feature} attribution={contribution_value:+.4f} ({direction_text}). "
                 f"{get_clinical_feature_explanation(selected_feature)}"
             )
         else:
-            clinical_explanation = f"{selected_feature}: {get_clinical_feature_explanation(selected_feature)}"
+            clinical_explanation = (
+                f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
+                f"Focus: {selected_feature}. {get_clinical_feature_explanation(selected_feature)}"
+            )
 
     # Generate decision panel content for Feature Importance panel
     feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
@@ -2477,10 +2786,11 @@ def update_dashboard(
         eeg_fig,
         annotate_disabled,
         train_disabled,
-        f"{confidence_value:.2f}",
+        confidence_slider_disabled,
+        f"{current_confidence_threshold:.2f}",
         status_message,
         learning_curve_fig,
-        heatmap_fig,
+        sankey_output,
         embedding_fig,
         uncertainty_hist,
         feature_fig,
