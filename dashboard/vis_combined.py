@@ -2286,7 +2286,6 @@ app.layout = html.Div([
                         'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                     },
                 ),
-                html.Div(id="feature-reflection-text"),
             ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
@@ -2411,7 +2410,6 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
     Output("feature-balance-bar", "children"),
-    Output("feature-reflection-text", "children"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
@@ -2832,7 +2830,6 @@ def update_dashboard(
     if use_cached_feature_panel:
         feature_fig = feature_panel_cache["feature_fig"]
         feature_balance_bar = feature_panel_cache["feature_balance_bar"]
-        feature_reflection_text = feature_panel_cache["feature_reflection_text"]
     elif eeg_sample_available:
         if selected_sample_id is not None:
             feature_sample_idx = int(selected_sample_id)
@@ -2842,14 +2839,13 @@ def update_dashboard(
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
         # Generate decision panel content for Feature Importance panel
-        _, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+        _, feature_balance_bar, _ = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
         }
     else:
         feature_fig = go.Figure()
@@ -2860,12 +2856,10 @@ def update_dashboard(
             margin=dict(l=120, r=14, t=22, b=44),
         )
         feature_balance_bar = ""
-        feature_reflection_text = ""
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
         }
 
     round_display = f"Round {round_number}"
@@ -2896,7 +2890,6 @@ def update_dashboard(
         queue_status,
         current_sample_idx,
         feature_balance_bar,
-        feature_reflection_text,
     )
 
 
