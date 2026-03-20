@@ -2093,9 +2093,8 @@ app.layout = html.Div([
     # KPI + universal confidence control
     html.Div([
         html.Div([
-            html.Span("R", style={"fontWeight": "700", "color": "#334155", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
             html.Span(id="round-display",
-                      style={"marginLeft": "4px", "color": "#0f172a", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
+                      style={"color": "#0f172a", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
         ], style={"whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
         html.Div([
             html.Span("Labeled",
@@ -3006,6 +3005,7 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
 
     except Exception as e:
         return f"Error: {str(e)}"
+
 
 
 
