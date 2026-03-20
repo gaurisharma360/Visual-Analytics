@@ -66,7 +66,7 @@ import plotly.express as px
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
-# Classify as seizure when P(seizure) >= 0.45 to prioritize recall and reduce false negatives.
+# Classify as seizure when P(seizure) >= 0.4 to prioritize recall and reduce false negatives.
 SEIZURE_PROB_THRESHOLD = 0.4
 
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
