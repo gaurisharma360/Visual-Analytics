@@ -1,100 +1,95 @@
-/* NeuroLens Dashboard Layout Fixes */
+/* NeuroLens Responsive Dashboard */
 
-/* App shell - allow vertical scroll when content exceeds viewport */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#react-entry-point {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
 .app-shell {
+    width: 100%;
+    height: 100%;
     overflow-y: auto !important;
     overflow-x: hidden !important;
 }
 
-/* Avoid clipping inside panels; page scroll handles overflow. */
+.top-bar,
+.kpi-grid,
+.workspace-grid,
+.workspace-row,
 .viz-panel {
-    overflow: visible !important;
     min-width: 0 !important;
+    min-height: 0 !important;
 }
 
-/* Graph containers should fill available space */
-.viz-panel [data-dash-is="Graph"] {
-    width: 100% !important;
-    height: 100% !important;
-}
-
-/* Radio controls should not wrap excessively */
-.radio-controls {
-    flex-wrap: wrap !important;
-}
-
-.control-row {
-    font-size: 12px !important;
-    gap: 8px !important;
-}
-
-/* Button group should not wrap in single line if needed */
 .button-group {
-    flex-wrap: wrap !important;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 
-/* Top bar should compress nicely */
-.top-bar {
-    flex-wrap: wrap !important;
-    gap: 8px !important;
-}
-
-/* KPI grid should be responsive */
-.kpi-grid {
-    gap: 6px !important;
-    grid-auto-rows: minmax(20px, auto) !important;
-}
-
-/* Main workspace rows */
 .workspace-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
     gap: 6px !important;
-    height: auto !important;
-    overflow-y: visible !important;
     overflow-x: hidden !important;
+    overflow-y: visible !important;
 }
 
 .workspace-row {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important;
+    gap: 6px !important;
+    align-items: stretch !important;
+    flex: 1 1 auto !important;
+}
+
+.viz-panel {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    flex: 1 1 auto !important;
+    overflow: visible !important;
+}
+
+.viz-panel h3 {
+    margin: 0 0 4px 0;
+    font-size: clamp(11px, 1.6vw, 13px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.js-plotly-plot,
+.plot-container,
+.plotly-graph-div,
+.viz-panel [data-dash-is="Graph"] {
+    width: 100% !important;
+    height: 100% !important;
     min-width: 0 !important;
 }
 
-/* Legacy selectors retained for compatibility if older layouts are loaded. */
-.left-column,
-.right-column,
-.right-row1 {
-    gap: 6px !important;
+[data-dash-is="Graph"] {
+    min-height: 140px !important;
 }
 
-/* Prevent Plotly modebar from overlapping */
 .plotly-graph-div .modebar {
     position: relative !important;
-}
-
-/* Ensure Dash components don't exceed parent bounds */
-[data-dash-is="Graph"] {
-    min-height: 170px !important;
-}
-
-/* Slider container */
-.dcc_control > .rc-slider {
-    width: 100% !important;
-}
-
-/* Responsive adjustments */
-@media (max-width: 1280px) {
-    .workspace-row-top,
-    .workspace-row-middle {
-        grid-template-columns: 1.8fr 1fr !important;
-    }
-
-    .top-bar {
-        gap: 10px !important;
-    }
 }
 
 @media (max-width: 1024px) {
     .top-bar {
         flex-direction: column !important;
         align-items: stretch !important;
+        gap: 8px !important;
     }
 
     .kpi-grid {
@@ -106,7 +101,7 @@
     }
 
     [data-dash-is="Graph"] {
-        min-height: 220px !important;
+        min-height: 180px !important;
     }
 }
 
@@ -116,35 +111,26 @@
     }
 
     .button-group {
-        width: 100% !important;
+        width: 100%;
     }
 
     .button-group button {
-        width: 100% !important;
+        width: 100%;
         margin-left: 0 !important;
+        font-size: clamp(10px, 2.8vw, 12px) !important;
     }
 
     .kpi-grid {
         grid-template-columns: 1fr !important;
+        gap: 4px !important;
+    }
+
+    .viz-panel {
+        padding: 4px !important;
     }
 
     [data-dash-is="Graph"] {
-        min-height: 190px !important;
+        min-height: 170px !important;
     }
 }
-
-/* Prevent text overflow in headers */
-.viz-panel h3 {
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-}
-
-/* Ensure flex grow works properly */
-.viz-panel {
-    flex: 1 1 auto !important;
-    min-height: 0 !important;
-}
-
-/* No clinical explanation box in the current annotation panel layout. */
 

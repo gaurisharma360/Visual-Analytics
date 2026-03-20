@@ -29,7 +29,6 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 try:
     from umap import UMAP
-
     UMAP_AVAILABLE = True
     UMAP_IMPORT_ERROR = None
 except ImportError:
@@ -67,12 +66,21 @@ import plotly.express as px
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
+# Classify as seizure when P(seizure) >= 0.30 to prioritize recall and reduce false negatives.
+SEIZURE_PROB_THRESHOLD = 0.30
+
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
 dgrid_runtime_modes = {}
 
 # Canonical runtime keys used across embedding compute + logging.
 DGRID_KEY_UMAP_DATA = "UMAP-DATA"
 DGRID_KEY_UMAP_MODEL = "UMAP-MODEL"
+
+
+def predict_binary_with_threshold(X):
+    """Predict binary labels using the custom seizure probability threshold."""
+    seizure_probs = model.predict_proba(X)[:, 1]
+    return (seizure_probs >= SEIZURE_PROB_THRESHOLD).astype(int)
 
 
 def _print_dgrid_status(tag):
@@ -230,8 +238,7 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
         return np.sqrt(uniform_filter1d(x ** 2, size=window_size, mode="nearest"))
 
     def _window_p2p(x):
-        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size,
-                                                                                        mode="nearest")
+        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size, mode="nearest")
 
     def _top_mask(score, pct=75):
         threshold = np.percentile(score, pct)
@@ -454,8 +461,7 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         html.Span("Model Decision  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
         html.Span("Prediction: ", style={"fontSize": "10px", "color": "#6b7280"}),
         html.Span(pred_label, style={"fontWeight": "700", "fontSize": "11px", "color": pred_color}),
-        html.Span(f"  P(seizure): {pred_prob:.2f}",
-                  style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  P(seizure): {pred_prob:.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Base: {base_value:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Score: {logit:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Method: {method_text}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
@@ -526,8 +532,7 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             lines.append("↑ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
         if top_against:
             lines.append("↓ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
-        lines.append(
-            f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
+        lines.append(f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
         reflection = html.Div([
             html.Span("Model reasoning:  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
             html.Span("  ".join(lines), style={"fontSize": "9px", "color": "#374151", "lineHeight": "1.5"}),
@@ -556,8 +561,7 @@ def get_clinical_feature_explanation(feature_name):
         "Skewness": "High skewness indicates waveform asymmetry, which may arise from non-sinusoidal epileptiform patterns.",
         "Mean": "Baseline drift in the local mean may reveal slow shifts in underlying cortical potential dynamics.",
     }
-    return explanation_map.get(feature_name,
-                               "This feature captures a model-relevant EEG pattern for the current segment.")
+    return explanation_map.get(feature_name, "This feature captures a model-relevant EEG pattern for the current segment.")
 
 
 # ==========================================================
@@ -818,7 +822,8 @@ def initialize_active_learning():
     global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global shap_explainer
 
     train_history = []
     test_history = []
@@ -846,8 +851,8 @@ def initialize_active_learning():
         y_train[labeled_idx],
         subjects_train[labeled_idx],
     )
-
-    initialize_shap_explainer()
+    # SHAP should refresh only after explicit training actions.
+    shap_explainer = None
 
     X_train_umap_model_dgrid = compute_model_umap_embedding()
 
@@ -856,9 +861,11 @@ def initialize_active_learning():
     current_pointer = 0
     selected_sample_id = None
     annotations_this_round = 0
-    previous_predictions = model.predict(X_train)
+    previous_predictions = predict_binary_with_threshold(X_train)
     prediction_history = [previous_predictions.copy()]
-    sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
+    test_predictions = predict_binary_with_threshold(X_test)
+    test_prediction_history = [test_predictions.copy()]
+    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
     feature_panel_cache = None
     stable_rounds = 0
     stop_active_learning = False
@@ -949,45 +956,35 @@ def build_confusion_heatmap(cm):
             title_standoff=10,
         ),
         width=None,
-        height=260,
     )
     return fig
 
 
 def build_sankey_confusion(y_true, y_pred):
-    """Build a Sankey diagram showing true-to-predicted class flow with class-normalized values."""
+    """Build a Sankey diagram showing true-to-predicted class flow with raw counts."""
     tn = int(np.sum((y_true == 0) & (y_pred == 0)))
     fp = int(np.sum((y_true == 0) & (y_pred == 1)))
     fn = int(np.sum((y_true == 1) & (y_pred == 0)))
     tp = int(np.sum((y_true == 1) & (y_pred == 1)))
 
-    # Normalize within class to handle imbalance
-    total_non_seizure = tn + fp + 1e-6
-    total_seizure = tp + fn + 1e-6
-
-    tn_normalized = tn / total_non_seizure
-    fp_normalized = fp / total_non_seizure
-    fn_normalized = fn / total_seizure
-    tp_normalized = tp / total_seizure
-
     labels = [
-        "True: Non-Seizure",
-        "True: Seizure",
-        "Pred: Non-Seizure",
-        "Pred: Seizure",
+        f"True: Non-Seizure ({tn + fp})",
+        f"True: Seizure ({fn + tp})",
+        f"Pred: Non-Seizure ({tn + fn})",
+        f"Pred: Seizure ({fp + tp})",
     ]
 
     source = [0, 0, 1, 1]
     target = [2, 3, 2, 3]
-    values = [tn_normalized, fp_normalized, fn_normalized, tp_normalized]
+    values = [tn, fp, fn, tp]
     colors = ["#2563eb", "#ef4444", "#f97316", "#22c55e"]
 
-    # Create hover text with label, count, and percentage
+    # Hover text with exact confusion matrix counts.
     hover_text = [
-        f"TN (True Negative)<br>Count: {tn}<br>Rate: {tn_normalized:.1%}",
-        f"FP (False Positive)<br>Count: {fp}<br>Rate: {fp_normalized:.1%}",
-        f"FN (False Negative)<br>Count: {fn}<br>Rate: {fn_normalized:.1%}",
-        f"TP (True Positive)<br>Count: {tp}<br>Rate: {tp_normalized:.1%}",
+        f"TN (True Negative)<br>Count: {tn}",
+        f"FP (False Positive)<br>Count: {fp}",
+        f"FN (False Negative)<br>Count: {fn}",
+        f"TP (True Positive)<br>Count: {tp}",
     ]
 
     fig = go.Figure(
@@ -995,7 +992,7 @@ def build_sankey_confusion(y_true, y_pred):
             arrangement="snap",
             node=dict(
                 pad=20,
-                thickness=20,
+                thickness=25,
                 line=dict(color="black", width=0.5),
                 label=labels,
                 color=["#1e40af", "#991b1b", "#1e40af", "#991b1b"],
@@ -1027,7 +1024,7 @@ def build_sankey_confusion(y_true, y_pred):
 
 
 def build_multiround_sankey(pred_history, y_true):
-    """Build Sankey showing TN/FP/FN/TP transitions across rounds with class-normalized flows."""
+    """Build Sankey showing TN/FP/FN/TP transitions across rounds using raw counts."""
     if pred_history is None or len(pred_history) == 0:
         fig = go.Figure()
         fig.update_layout(
@@ -1053,9 +1050,6 @@ def build_multiround_sankey(pred_history, y_true):
         return build_sankey_confusion(y_true, np.asarray(pred_history[0]))
 
     y_true = np.asarray(y_true)
-    total_non_seizure = max(int(np.sum(y_true == 0)), 1)
-    total_seizure = max(int(np.sum(y_true == 1)), 1)
-    sample_weights = np.where(y_true == 0, 1.0 / total_non_seizure, 1.0 / total_seizure)
 
     category_code = {
         (0, 0): "TN",
@@ -1069,6 +1063,15 @@ def build_multiround_sankey(pred_history, y_true):
         (1, 0): "#f97316",
         (1, 1): "#22c55e",
     }
+
+    round_category_counts = []
+    for preds in pred_history:
+        preds_arr = np.asarray(preds).astype(int)
+        counts = {}
+        for key in category_code:
+            t_label, p_label = key
+            counts[key] = int(np.sum((y_true == t_label) & (preds_arr == p_label)))
+        round_category_counts.append(counts)
 
     labels = []
     node_keys = []
@@ -1085,7 +1088,8 @@ def build_multiround_sankey(pred_history, y_true):
         key = (round_idx, true_label, pred_label)
         if key not in node_map:
             node_map[key] = len(labels)
-            labels.append(f"R{round_idx} {category_code[(true_label, pred_label)]}")
+            count = round_category_counts[round_idx][(true_label, pred_label)]
+            labels.append(f"R{round_idx} {category_code[(true_label, pred_label)]} ({count})")
             node_keys.append(key)
         return node_map[key]
 
@@ -1105,23 +1109,20 @@ def build_multiround_sankey(pred_history, y_true):
                 flow_index[key] = len(source)
                 source.append(src)
                 target.append(dst)
-                values.append(float(sample_weights[i]))
+                values.append(1.0)
                 flow_counts.append(1)
             else:
                 idx = flow_index[key]
-                values[idx] += float(sample_weights[i])
+                values[idx] += 1.0
                 flow_counts[idx] += 1
 
     for idx, (src, dst) in enumerate(zip(source, target)):
         dst_key = node_keys[dst]
         dst_category = (dst_key[1], dst_key[2])
         count = flow_counts[idx]
-        norm_rate = values[idx]
-
         link_colors.append(category_color[dst_category])
         hover_text.append(
             f"<br>Count: {count}"
-            f"<br>Normalized: {norm_rate:.1%}"
         )
 
     node_colors = [category_color[(k[1], k[2])] for k in node_keys]
@@ -1132,7 +1133,7 @@ def build_multiround_sankey(pred_history, y_true):
             node=dict(
                 label=labels,
                 pad=20,
-                thickness=20,
+                thickness=25,
                 line=dict(color="black", width=0.5),
                 color=node_colors,
             ),
@@ -1222,7 +1223,7 @@ def _build_embedding_boundary_trace(embedding_coords):
         y=yy[:, 0],
         z=zz,
         showscale=False,
-        contours=dict(start=0.5, end=0.5, size=1, coloring="none", showlines=True),
+        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none", showlines=True),
         line=dict(color="black", width=2, dash="dash"),
         name="Decision Boundary",
         hoverinfo="skip",
@@ -1287,7 +1288,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="← Non-Seizure  |  Seizure →",
             yaxis_title="",
             template="plotly_white",
-            height=260,
             margin=dict(l=120, r=14, t=22, b=44),
             showlegend=False,
         )
@@ -1365,7 +1365,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="Contribution",
             yaxis_title="",
             template="plotly_white",
-            height=260,
             margin=dict(l=120, r=14, t=14, b=44),
             barmode='relative',
             legend=dict(
@@ -1439,13 +1438,13 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
     if len(unlabeled_idx) > 0:
         unlabeled_probs = model.predict_proba(X_train[unlabeled_idx])
         all_uncertainties[unlabeled_idx] = 1 - np.max(unlabeled_probs, axis=1)
-        all_predictions[unlabeled_idx] = model.predict(X_train[unlabeled_idx])
+        all_predictions[unlabeled_idx] = predict_binary_with_threshold(X_train[unlabeled_idx])
         all_probs_class1[unlabeled_idx] = unlabeled_probs[:, 1]
 
     if len(labeled_idx) > 0:
         labeled_probs = model.predict_proba(X_train[labeled_idx])
         all_uncertainties[labeled_idx] = 1 - np.max(labeled_probs, axis=1)
-        all_predictions[labeled_idx] = model.predict(X_train[labeled_idx])
+        all_predictions[labeled_idx] = predict_binary_with_threshold(X_train[labeled_idx])
         all_probs_class1[labeled_idx] = labeled_probs[:, 1]
 
     all_probs_class0 = 1 - all_probs_class1
@@ -1573,10 +1572,10 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             color_discrete_map={"Seizure": "#e74c3c", "Non-Seizure": "#3498db"},
             hover_data={
                 "Predicted_Label": True,
+                "True_Label": True,
                 "Status": True,
                 "Threshold_Display": True,
                 "Displayed_Prob": ":.2f",
-                # "True_Label": True,
                 # "Correct": True,
                 # "Uncertainty": ":.2f",
                 # "Prob_Seizure": ":.2f",
@@ -1910,6 +1909,7 @@ app.index_string = '''
             }
 
             #react-entry-point {
+                width: 100%;
                 height: 100%;
             }
 
@@ -1956,8 +1956,12 @@ app.index_string = '''
                 .radio-controls label { margin-left: 0 !important; margin-top: 4px; }
             }
 
-            /* Make graphs responsive */
-            .js-plotly-plot { min-height: 250px; }
+            /* Make Plotly containers fully responsive */
+            .js-plotly-plot,
+            .plot-container {
+                width: 100% !important;
+                height: 100% !important;
+            }
 
             /* Keep Plotly controls from colliding with long titles */
             .js-plotly-plot .modebar {
@@ -2160,22 +2164,15 @@ app.layout = html.Div([
         "marginBottom": "6px",
     }),
 
-    # Main workspace layout: row1 UMAP+uncertainty, row2 EEG+learning (same sizing), row3 SHAP+sankey.
+    # Main workspace layout: responsive rows that auto-fit on any screen width.
     html.Div([
         html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="pca-embedding", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="pca-embedding", style={"width": "100%", "height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
-                    dcc.RadioItems(
-                        id="embedding-space-mode",
-                        options=[{"label": " Model UMAP", "value": "model"}],
-                        value="model",
-                        inline=True,
-                        style={"fontSize": "9px", "marginRight": "8px"},
-                    ),
                     dcc.RadioItems(
                         id="pca-view-mode",
                         options=[
@@ -2191,8 +2188,8 @@ app.layout = html.Div([
                         id="sample-filter",
                         options=[
                             {"label": " All", "value": "all"},
-                            {"label": " Lab", "value": "labeled"},
-                            {"label": " Unlab", "value": "unlabeled"},
+                            {"label": " Labeled", "value": "labeled"},
+                            {"label": " Unlabeled", "value": "unlabeled"},
                         ],
                         value="all",
                         inline=True,
@@ -2201,158 +2198,153 @@ app.layout = html.Div([
                 ], className="radio-controls control-row",
                     style={"display": "flex", "gap": "4px", "flexWrap": "wrap", "paddingTop": "2px"}),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
 
             html.Div([
                 html.H3("Uncertainty",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="uncertainty-histogram", style={"width": "100%", "height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-top", style={
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gridTemplateColumns": "repeat(auto-fit, minmax(300px, 1fr))",
             "gap": "6px",
             "alignItems": "stretch",
+            "minWidth": "0",
             "minHeight": "0",
+            "flex": "1",
         }),
 
         html.Div([
             html.Div([
                 html.H3("Annotation Panel",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="eeg-graph", style={"width": "100%", "height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
-                html.Div(
-                    id="clinical-explanation",
-                    style={
-                        "marginTop": "4px",
-                        "fontSize": "10px",
-                        "color": "#334155",
-                        "backgroundColor": "#f8fafc",
-                        "border": "1px solid #e2e8f0",
-                        "borderRadius": "6px",
-                        "padding": "6px",
-                        "lineHeight": "1.35",
-                        "overflow": "auto",
-                        "maxHeight": "60px",
-                    },
-                ),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "4px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
 
             html.Div([
                 html.H3("Learning",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="learning-curve", style={"width": "100%", "height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-middle", style={
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gridTemplateColumns": "repeat(auto-fit, minmax(300px, 1fr))",
             "gap": "6px",
             "alignItems": "stretch",
+            "minWidth": "0",
             "minHeight": "0",
+            "flex": "1",
         }),
 
         html.Div([
             html.Div([
                 html.H3("Feature Importance",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.Div(id="feature-decision-header"),
-                html.Div(id="feature-balance-bar"),
+                html.Div(id="feature-balance-bar", style={"minHeight": "26px", "maxHeight": "26px"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "minHeight": "180px"},
+                    style={"width": "100%", "height": "100%"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
                         'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                     },
                 ),
-                html.Div(id="feature-reflection-text"),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
 
             html.Div([
                 html.H3("Prediction Flow Across Rounds",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "180px"},
+                dcc.Graph(id="confusion-heatmap", style={"width": "100%", "height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
+                "display": "flex",
+                "flexDirection": "column",
+                "height": "100%",
+                "flex": "1",
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "4px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-bottom", style={
             "display": "grid",
-            "gridTemplateColumns": "1fr 1fr",
+            "gridTemplateColumns": "repeat(auto-fit, minmax(300px, 1fr))",
             "gap": "6px",
             "alignItems": "stretch",
+            "minWidth": "0",
             "minHeight": "0",
+            "flex": "1",
         }),
     ], className="main-workspace workspace-grid", style={
         "display": "flex",
         "flexDirection": "column",
         "gap": "6px",
-        "flex": "1 1 auto",
+        "flex": "1",
+        "minWidth": "0",
         "minHeight": "0",
-        "height": "auto",
-        "overflowY": "visible",
         "overflowX": "hidden",
+        "overflowY": "visible",
     }),
 
     # Hidden perturbation mount to keep callback IDs available without showing the panel.
@@ -2371,15 +2363,14 @@ app.layout = html.Div([
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "auto",
+    "height": "100vh",
     "minHeight": "100vh",
     "maxHeight": "none",
     "padding": "6px",
     "boxSizing": "border-box",
     "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
     "backgroundColor": "#f1f5f9",
-    "overflowY": "auto",
-    "overflowX": "hidden",
+    "overflow": "hidden",
 }, className="app-shell")
 
 
@@ -2414,7 +2405,6 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
 
     return selected_features
 
-
 @app.callback(
     Output("eeg-graph", "figure"),
     Output("annotate-btn", "disabled"),
@@ -2433,16 +2423,12 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Output("embedding-title", "children"),
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
-    Output("clinical-explanation", "children"),
-    Output("feature-decision-header", "children"),
     Output("feature-balance-bar", "children"),
-    Output("feature-reflection-text", "children"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
     Input("reset-btn", "n_clicks"),
-    Input("embedding-space-mode", "value"),
     Input("pca-view-mode", "value"),
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
@@ -2456,7 +2442,6 @@ def update_dashboard(
         train_clicks,
         confidence_value,
         reset_clicks,
-        embedding_space_mode,
         pca_view_mode,
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
@@ -2471,7 +2456,7 @@ def update_dashboard(
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -2548,10 +2533,10 @@ def update_dashboard(
                 annotation_queue.append(int(selected_sample_id))
 
         if (
-                not stop_active_learning
-                and phase == "annotation"
-                and len(annotation_queue) > 0
-                and current_pointer < len(annotation_queue)
+            not stop_active_learning
+            and phase == "annotation"
+            and len(annotation_queue) > 0
+            and current_pointer < len(annotation_queue)
         ):
             sample_id = int(annotation_queue.pop(current_pointer))
             if sample_id in unlabeled_idx:
@@ -2591,13 +2576,18 @@ def update_dashboard(
             X_train_umap_model_dgrid = compute_model_umap_embedding()
 
             # Compute metrics BEFORE setting phase back to annotation
-            train_acc_new = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
-            test_pred_new = model.predict(X_test)
+            train_acc_new = accuracy_score(y_train[labeled_idx], predict_binary_with_threshold(X_train[labeled_idx]))
+            test_pred_new = predict_binary_with_threshold(X_test)
             test_acc_new = accuracy_score(y_test, test_pred_new)
             cm_new = confusion_matrix(y_test, test_pred_new)
             tn, fp, fn, tp = cm_new.ravel()
             sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
             specificity_new = tn / (tn + fp) if (tn + fp) else 0
+
+            print(
+                f"[ROUND {round_number}] TN={tn} FP={fp} FN={fn} TP={tp} "
+                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f}"
+            )
 
             # Record history for this round
             train_history.append(train_acc_new)
@@ -2615,7 +2605,7 @@ def update_dashboard(
             annotations_this_round = 0
 
             # Hybrid stopping: no uncertain doctor samples + stable predictions.
-            current_predictions = model.predict(X_train)
+            current_predictions = predict_binary_with_threshold(X_train)
             previous_round_predictions = previous_predictions.copy() if previous_predictions is not None else None
             flips = 0
             flip_ratio = 0.0
@@ -2630,6 +2620,7 @@ def update_dashboard(
 
             previous_predictions = current_predictions.copy()
             prediction_history.append(current_predictions.copy())
+            test_prediction_history.append(test_pred_new.copy())
 
             if stable_rounds >= stability_required_rounds and len(current_batch) == 0:
                 stop_active_learning = True
@@ -2647,8 +2638,8 @@ def update_dashboard(
                 )
 
     # Always compute current metrics for display
-    train_acc = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
-    test_pred = model.predict(X_test)
+    train_acc = accuracy_score(y_train[labeled_idx], predict_binary_with_threshold(X_train[labeled_idx]))
+    test_pred = predict_binary_with_threshold(X_test)
     test_acc = accuracy_score(y_test, test_pred)
 
     cm = confusion_matrix(y_test, test_pred)
@@ -2663,6 +2654,12 @@ def update_dashboard(
         sensitivity_history.append(sensitivity)
         specificity_history.append(specificity)
         round_history.append(0)
+        if len(test_prediction_history) == 0:
+            test_prediction_history.append(test_pred.copy())
+        print(
+            f"[ROUND 0] TN={tn} FP={fp} FN={fn} TP={tp} "
+            f"| Sensitivity={sensitivity:.4f} Specificity={specificity:.4f}"
+        )
 
     pending_queue = max(0, len(annotation_queue) - current_pointer)
 
@@ -2822,11 +2819,13 @@ def update_dashboard(
         train_disabled = stop_active_learning or annotations_this_round == 0
         confidence_slider_disabled = phase != "annotation"
 
-    sankey_output = dash.no_update
-    if trigger_id in [None, "url", "reset-btn", "train-btn"] or sankey_fig_cache is None:
-        sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
-        sankey_output = sankey_fig_cache
+    # Show multi-round test-set flow (round-to-round TN/FP/FN/TP transitions).
+    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
+    sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
+
+    # Embedding-space toggle removed from UI; keep model-space embedding fixed.
+    embedding_space_mode = "model"
 
     embedding_fig, embedding_type = build_embedding_figure(
         pca_view_mode,
@@ -2840,80 +2839,54 @@ def update_dashboard(
     importance_mode = "contribution"
     selected_feature = selected_features[-1] if selected_features else None
 
-    use_cached_feature_panel = trigger_id == "annotate-btn" and feature_panel_cache is not None
+    current_feature_sample_idx = None
+    if eeg_sample_available:
+        if selected_sample_id is not None:
+            current_feature_sample_idx = int(selected_sample_id)
+        elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
+            current_feature_sample_idx = int(annotation_queue[current_pointer])
+
+    cache_matches_context = (
+            feature_panel_cache is not None
+            and feature_panel_cache.get("sample_idx") == current_feature_sample_idx
+            and feature_panel_cache.get("selected_features") == tuple(selected_features)
+    )
+
+    use_cached_feature_panel = trigger_id == "annotate-btn" and cache_matches_context
 
     if use_cached_feature_panel:
         feature_fig = feature_panel_cache["feature_fig"]
-        clinical_explanation = feature_panel_cache["clinical_explanation"]
-        feature_decision_header = feature_panel_cache["feature_decision_header"]
         feature_balance_bar = feature_panel_cache["feature_balance_bar"]
-        feature_reflection_text = feature_panel_cache["feature_reflection_text"]
     elif eeg_sample_available:
-        if selected_sample_id is not None:
-            feature_sample_idx = int(selected_sample_id)
-        else:
-            feature_sample_idx = int(annotation_queue[current_pointer])
+        feature_sample_idx = int(current_feature_sample_idx)
 
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
-        clinical_explanation = "Click one or more feature bars to inspect clinically relevant EEG evidence."
-        if selected_features:
-            attribution_data = compute_feature_attributions(feature_sample_idx)
-            contribution_value = None
-            if attribution_data is not None:
-                feature_names = attribution_data["feature_names"]
-                attributions = attribution_data["attributions"]
-                feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
-                if selected_feature in feature_to_idx:
-                    contribution_value = float(attributions[feature_to_idx[selected_feature]])
-
-            if contribution_value is not None:
-                direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
-                clinical_explanation = (
-                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                    f"Focus: {selected_feature} attribution={contribution_value:+.4f} ({direction_text}). "
-                    f"{get_clinical_feature_explanation(selected_feature)}"
-                )
-            else:
-                clinical_explanation = (
-                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                    f"Focus: {selected_feature}. {get_clinical_feature_explanation(selected_feature)}"
-                )
-
         # Generate decision panel content for Feature Importance panel
-        feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+        _, feature_balance_bar, _ = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
-            "clinical_explanation": clinical_explanation,
-            "feature_decision_header": feature_decision_header,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
+            "sample_idx": feature_sample_idx,
+            "selected_features": tuple(selected_features),
         }
     else:
         feature_fig = go.Figure()
         feature_fig.update_layout(
             title="No sample selected or in queue",
             template="plotly_white",
-            height=260,
             margin=dict(l=120, r=14, t=22, b=44),
         )
-        clinical_explanation = "No EEG sample is currently displayed. Select a sample to view feature contributions."
-        feature_decision_header = html.Span(
-            "Select or queue a sample to see decision insights.",
-            style={"fontSize": "10px", "color": "#94a3b8"},
-        )
         feature_balance_bar = ""
-        feature_reflection_text = ""
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
-            "clinical_explanation": clinical_explanation,
-            "feature_decision_header": feature_decision_header,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
+            "sample_idx": None,
+            "selected_features": tuple(selected_features),
         }
 
     round_display = f"Round {round_number}"
@@ -2943,10 +2916,7 @@ def update_dashboard(
         f"{embedding_type} Embedding View",
         queue_status,
         current_sample_idx,
-        clinical_explanation,
-        feature_decision_header,
         feature_balance_bar,
-        feature_reflection_text,
     )
 
 
@@ -3033,8 +3003,8 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
         original_probs = model.predict_proba(original_features)[0]
         perturbed_probs = model.predict_proba(perturbed_features)[0]
 
-        original_pred = "Seizure" if original_probs[1] > 0.5 else "Non-Seizure"
-        perturbed_pred = "Seizure" if perturbed_probs[1] > 0.5 else "Non-Seizure"
+        original_pred = "Seizure" if original_probs[1] >= SEIZURE_PROB_THRESHOLD else "Non-Seizure"
+        perturbed_pred = "Seizure" if perturbed_probs[1] >= SEIZURE_PROB_THRESHOLD else "Non-Seizure"
 
         # Calculate change
         prob_change = perturbed_probs[1] - original_probs[1]
