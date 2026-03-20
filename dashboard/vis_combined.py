@@ -8,6 +8,7 @@
 
 import warnings
 import importlib
+import os
 from sklearn.exceptions import ConvergenceWarning
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -559,7 +560,8 @@ def get_clinical_feature_explanation(feature_name):
 # ==========================================================
 
 def load_and_split():
-    df = pd.read_csv("./bonn_eeg_combined.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "..", "bonn_eeg_combined.csv")
+    df = pd.read_csv(data_path)
 
     X_raw = df.drop(["ID", "Y"], axis=1).values
     y_original = df["Y"].values
@@ -1465,6 +1467,32 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
         "Threshold_Status": threshold_flag,
     })
 
+    # Confidence is the probability of the predicted class; Uncertainty is 1 - Confidence.
+    embedding_df["Confidence"] = np.maximum(
+        embedding_df["Prob_Seizure"],
+        embedding_df["Prob_Non_Seizure"],
+    )
+    embedding_df["Uncertainty"] = 1.0 - embedding_df["Confidence"]
+
+    embedding_df["Displayed_Prob"] = np.where(
+        embedding_df["Predicted_Label"] == "Seizure",
+        embedding_df["Prob_Seizure"],
+        embedding_df["Prob_Non_Seizure"],
+    )
+    embedding_df["Displayed_Label"] = np.where(
+        embedding_df["Predicted_Label"] == "Seizure",
+        "P(Seizure)",
+        "P(Non-Seizure)",
+    )
+
+    embedding_df["Threshold_Display"] = embedding_df["Threshold_Status"]
+
+    embedding_df["Correct"] = np.where(
+        embedding_df["True_Label"] == embedding_df["Predicted_Label"],
+        "Yes",
+        "No",
+    )
+
     # Apply sample filter from gauri's version
     plot_df = embedding_df
     if sample_filter == "labeled":
@@ -1480,26 +1508,44 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             x="Dim1",
             y="Dim2",
             color="Status",
-            custom_data=["Sample_ID"],  # For click interaction
+            custom_data=[
+                "Sample_ID",
+                "Predicted_Label",
+                "Status",
+                "Threshold_Display",
+                "Displayed_Label",
+                "Displayed_Prob",
+            ],
             color_discrete_map={"Labeled": "#27ae60", "Unlabeled": "#95a5a6"},
             hover_data={
-                # "Dim1": ":.3f",
-                # "Dim2": ":.3f",
-                "Dim1": False,
-                "Dim2": False,
-                "Status": True,
-                # "True_Label": True,
                 "Predicted_Label": True,
-                "Uncertainty": ":.4f",
-                "Prob_Non_Seizure": ":.4f",
-                "Prob_Seizure": ":.4f",
+                "Status": True,
+                "Threshold_Display": True,
+                "Displayed_Prob": ":.2f",
+                # "True_Label": True,
+                # "Uncertainty": ":.2f",
+                # "Prob_Seizure": ":.2f",
+                # "Prob_Non_Seizure": ":.2f",
                 # "Sample_ID": True,
                 # "Queried": True,
                 # "In_Queue": True,
-                #"Threshold_Status": True,
+                # "Threshold_Status": True,
             },
             title=None,
-            labels={"Dim1": coord_labels["x"], "Dim2": coord_labels["y"]},
+            labels={
+                "Dim1": coord_labels["x"],
+                "Dim2": coord_labels["y"],
+                "Threshold_Display": "Threshold Status",
+                "Displayed_Prob": "Probability",
+            },
+        )
+        embedding_fig.update_traces(
+            hovertemplate=(
+                "Predicted Label: %{customdata[1]}<br>"
+                "Status: %{customdata[2]}<br>"
+                "Threshold Status: %{customdata[3]}<br>"
+                "%{customdata[4]}: %{customdata[5]:.2f}<extra></extra>"
+            )
         )
     elif pca_view_mode == "true_class":
         embedding_fig = px.scatter(
@@ -1507,25 +1553,45 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             x="Dim1",
             y="Dim2",
             color="True_Label",
-            custom_data=["Sample_ID"],
+            custom_data=[
+                "Sample_ID",
+                "Predicted_Label",
+                "Status",
+                "Threshold_Display",
+                "Displayed_Label",
+                "Displayed_Prob",
+            ],
             color_discrete_map={"Seizure": "#e74c3c", "Non-Seizure": "#3498db"},
             hover_data={
-                # "Dim1": ":.3f",
-                # "Dim2": ":.3f",
-                "Dim1": False,
-                "Dim2": False,
-                "Status": True,
                 "Predicted_Label": True,
-                "Uncertainty": ":.4f",
-                # "Prob_Non_Seizure": ":.4f",
-                "Prob_Seizure": ":.4f",
+                "Status": True,
+                "Threshold_Display": True,
+                "Displayed_Prob": ":.2f",
+                # "True_Label": True,
+                # "Correct": True,
+                # "Uncertainty": ":.2f",
+                # "Prob_Seizure": ":.2f",
+                # "Prob_Non_Seizure": ":.2f",
                 # "Sample_ID": True,
                 # "Queried": True,
                 # "In_Queue": True,
-                #"Threshold_Status": True,
+                # "Threshold_Status": True,
             },
             title=None,
-            labels={"Dim1": coord_labels["x"], "Dim2": coord_labels["y"]},
+            labels={
+                "Dim1": coord_labels["x"],
+                "Dim2": coord_labels["y"],
+                "Threshold_Display": "Threshold Status",
+                "Displayed_Prob": "Probability",
+            },
+        )
+        embedding_fig.update_traces(
+            hovertemplate=(
+                "Predicted Label: %{customdata[1]}<br>"
+                "Status: %{customdata[2]}<br>"
+                "Threshold Status: %{customdata[3]}<br>"
+                "%{customdata[4]}: %{customdata[5]:.2f}<extra></extra>"
+            )
         )
     else:
         embedding_fig = px.scatter(
@@ -1533,26 +1599,45 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             x="Dim1",
             y="Dim2",
             color="Uncertainty",
-            custom_data=["Sample_ID"],
+            custom_data=[
+                "Sample_ID",
+                "Predicted_Label",
+                "Status",
+                "Threshold_Display",
+                "Displayed_Label",
+                "Displayed_Prob",
+                # "Uncertainty",
+            ],
             color_continuous_scale="Reds",
             hover_data={
-                # "Dim1": ":.3f",
-                # "Dim2": ":.3f",
-                "Dim1": False,
-                "Dim2": False,
-                # "True_Label": True,
                 "Predicted_Label": True,
                 "Status": True,
-                "Uncertainty": ":.4f",
-                # "Prob_Non_Seizure": ":.4f",
-                "Prob_Seizure": ":.4f",
+                "Threshold_Display": True,
+                "Displayed_Prob": ":.2f",
+                # "True_Label": True,
+                # "Uncertainty": ":.2f",
+                # "Prob_Seizure": ":.2f",
+                # "Prob_Non_Seizure": ":.2f",
                 # "Sample_ID": True,
                 # "Queried": True,
                 # "In_Queue": True,
-                "Threshold_Status": True,
+                # "Threshold_Status": True,
             },
             title=None,
-            labels={"Dim1": coord_labels["x"], "Dim2": coord_labels["y"]},
+            labels={
+                "Dim1": coord_labels["x"],
+                "Dim2": coord_labels["y"],
+                "Threshold_Display": "Threshold Status",
+                "Displayed_Prob": "Probability",
+            },
+        )
+        embedding_fig.update_traces(
+            hovertemplate=(
+                "Predicted Label: %{customdata[1]}<br>"
+                "Status: %{customdata[2]}<br>"
+                "Threshold Status: %{customdata[3]}<br>"
+                "%{customdata[4]}: %{customdata[5]:.2f}<extra></extra>"
+            )
         )
 
     if not plot_df.empty:
