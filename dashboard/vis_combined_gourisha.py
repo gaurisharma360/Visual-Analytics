@@ -1993,7 +1993,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div([
-    dcc.Location(id="url", refresh=True),
+    dcc.Location(id="url", refresh=False),
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
     dcc.Store(id="selected-features-store", data=[]),  # Multi-select feature state
@@ -3072,5 +3072,5 @@ if __name__ == "__main__":
     print("5. Click feature bars to see EEG evidence")
     print("=" * 70 + "\n")
 
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
 

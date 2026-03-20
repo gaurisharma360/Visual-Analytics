@@ -66,8 +66,8 @@ import plotly.express as px
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
-# Classify as seizure when P(seizure) >= 0.4 to prioritize recall and reduce false negatives.
-SEIZURE_PROB_THRESHOLD = 0.4
+# Classify as seizure when P(seizure) >= 0.30 to prioritize recall and reduce false negatives.
+SEIZURE_PROB_THRESHOLD = 0.30
 
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
 dgrid_runtime_modes = {}
@@ -1040,7 +1040,7 @@ def build_multiround_sankey(pred_history, y_true):
                     xref="paper",
                     yref="paper",
                     showarrow=False,
-                    font=dict(size=12, color="#ffffff"),
+                    font=dict(size=12, color="#64748b"),
                 )
             ],
         )
@@ -1991,7 +1991,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div([
-    dcc.Location(id="url", refresh=True),
+    dcc.Location(id="url", refresh=False),
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
     dcc.Store(id="selected-features-store", data=[]),  # Multi-select feature state
@@ -2580,7 +2580,7 @@ def update_dashboard(
             train_history.append(train_acc_new)
             test_history.append(test_acc_new)
             sensitivity_history.append(sensitivity_new)
-            specificity_history.append(specificity_new)
+            specificity_history.append(sensitivity_new)
             round_history.append(round_number)
 
             # Now reset for next round
@@ -2807,8 +2807,11 @@ def update_dashboard(
         confidence_slider_disabled = phase != "annotation"
 
     # Show multi-round test-set flow (round-to-round TN/FP/FN/TP transitions).
-    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
-    sankey_output = sankey_fig_cache
+    # Rebuild only when it can actually change (initial load/reset/train).
+    sankey_output = dash.no_update
+    if trigger_id in [None, "url", "reset-btn", "train-btn"] or sankey_fig_cache is None:
+        sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
+        sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
 
     # Embedding-space toggle removed from UI; keep model-space embedding fixed.
@@ -3060,5 +3063,5 @@ if __name__ == "__main__":
     print("5. Click feature bars to see EEG evidence")
     print("=" * 70 + "\n")
 
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
 
