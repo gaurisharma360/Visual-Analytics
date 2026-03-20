@@ -66,12 +66,21 @@ import plotly.express as px
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
+# Classify as seizure when P(seizure) >= 0.30 to prioritize recall and reduce false negatives.
+SEIZURE_PROB_THRESHOLD = 0.30
+
 # Captures runtime mode per embedding so startup logs can confirm DGrid status.
 dgrid_runtime_modes = {}
 
 # Canonical runtime keys used across embedding compute + logging.
 DGRID_KEY_UMAP_DATA = "UMAP-DATA"
 DGRID_KEY_UMAP_MODEL = "UMAP-MODEL"
+
+
+def predict_binary_with_threshold(X):
+    """Predict binary labels using the custom seizure probability threshold."""
+    seizure_probs = model.predict_proba(X)[:, 1]
+    return (seizure_probs >= SEIZURE_PROB_THRESHOLD).astype(int)
 
 
 def _print_dgrid_status(tag):
@@ -850,7 +859,7 @@ def initialize_active_learning():
     current_pointer = 0
     selected_sample_id = None
     annotations_this_round = 0
-    previous_predictions = model.predict(X_train)
+    previous_predictions = predict_binary_with_threshold(X_train)
     prediction_history = [previous_predictions.copy()]
     sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
     feature_panel_cache = None
@@ -1216,7 +1225,7 @@ def _build_embedding_boundary_trace(embedding_coords):
         y=yy[:, 0],
         z=zz,
         showscale=False,
-        contours=dict(start=0.5, end=0.5, size=1, coloring="none", showlines=True),
+        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none", showlines=True),
         line=dict(color="black", width=2, dash="dash"),
         name="Decision Boundary",
         hoverinfo="skip",
@@ -1433,13 +1442,13 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
     if len(unlabeled_idx) > 0:
         unlabeled_probs = model.predict_proba(X_train[unlabeled_idx])
         all_uncertainties[unlabeled_idx] = 1 - np.max(unlabeled_probs, axis=1)
-        all_predictions[unlabeled_idx] = model.predict(X_train[unlabeled_idx])
+        all_predictions[unlabeled_idx] = predict_binary_with_threshold(X_train[unlabeled_idx])
         all_probs_class1[unlabeled_idx] = unlabeled_probs[:, 1]
 
     if len(labeled_idx) > 0:
         labeled_probs = model.predict_proba(X_train[labeled_idx])
         all_uncertainties[labeled_idx] = 1 - np.max(labeled_probs, axis=1)
-        all_predictions[labeled_idx] = model.predict(X_train[labeled_idx])
+        all_predictions[labeled_idx] = predict_binary_with_threshold(X_train[labeled_idx])
         all_probs_class1[labeled_idx] = labeled_probs[:, 1]
 
     all_probs_class0 = 1 - all_probs_class1
@@ -2582,8 +2591,8 @@ def update_dashboard(
             X_train_umap_model_dgrid = compute_model_umap_embedding()
 
             # Compute metrics BEFORE setting phase back to annotation
-            train_acc_new = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
-            test_pred_new = model.predict(X_test)
+            train_acc_new = accuracy_score(y_train[labeled_idx], predict_binary_with_threshold(X_train[labeled_idx]))
+            test_pred_new = predict_binary_with_threshold(X_test)
             test_acc_new = accuracy_score(y_test, test_pred_new)
             cm_new = confusion_matrix(y_test, test_pred_new)
             tn, fp, fn, tp = cm_new.ravel()
@@ -2606,7 +2615,7 @@ def update_dashboard(
             annotations_this_round = 0
 
             # Hybrid stopping: no uncertain doctor samples + stable predictions.
-            current_predictions = model.predict(X_train)
+            current_predictions = predict_binary_with_threshold(X_train)
             previous_round_predictions = previous_predictions.copy() if previous_predictions is not None else None
             flips = 0
             flip_ratio = 0.0
@@ -2638,8 +2647,8 @@ def update_dashboard(
                 )
 
     # Always compute current metrics for display
-    train_acc = accuracy_score(y_train[labeled_idx], model.predict(X_train[labeled_idx]))
-    test_pred = model.predict(X_test)
+    train_acc = accuracy_score(y_train[labeled_idx], predict_binary_with_threshold(X_train[labeled_idx]))
+    test_pred = predict_binary_with_threshold(X_test)
     test_acc = accuracy_score(y_test, test_pred)
 
     cm = confusion_matrix(y_test, test_pred)
@@ -3024,8 +3033,8 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
         original_probs = model.predict_proba(original_features)[0]
         perturbed_probs = model.predict_proba(perturbed_features)[0]
 
-        original_pred = "Seizure" if original_probs[1] > 0.5 else "Non-Seizure"
-        perturbed_pred = "Seizure" if perturbed_probs[1] > 0.5 else "Non-Seizure"
+        original_pred = "Seizure" if original_probs[1] >= SEIZURE_PROB_THRESHOLD else "Non-Seizure"
+        perturbed_pred = "Seizure" if perturbed_probs[1] >= SEIZURE_PROB_THRESHOLD else "Non-Seizure"
 
         # Calculate change
         prob_change = perturbed_probs[1] - original_probs[1]
