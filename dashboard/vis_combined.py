@@ -744,6 +744,7 @@ annotations_this_round = 0
 previous_predictions = None
 prediction_history = []
 sankey_fig_cache = None
+feature_panel_cache = None
 stable_rounds = 0
 stop_active_learning = False
 
@@ -811,7 +812,7 @@ def initialize_active_learning():
     global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
 
     train_history = []
     test_history = []
@@ -852,6 +853,7 @@ def initialize_active_learning():
     previous_predictions = model.predict(X_train)
     prediction_history = [previous_predictions.copy()]
     sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
+    feature_panel_cache = None
     stable_rounds = 0
     stop_active_learning = False
 
@@ -2460,7 +2462,7 @@ def update_dashboard(
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -2829,7 +2831,15 @@ def update_dashboard(
     importance_mode = "contribution"
     selected_feature = selected_features[-1] if selected_features else None
 
-    if eeg_sample_available:
+    use_cached_feature_panel = trigger_id == "annotate-btn" and feature_panel_cache is not None
+
+    if use_cached_feature_panel:
+        feature_fig = feature_panel_cache["feature_fig"]
+        clinical_explanation = feature_panel_cache["clinical_explanation"]
+        feature_decision_header = feature_panel_cache["feature_decision_header"]
+        feature_balance_bar = feature_panel_cache["feature_balance_bar"]
+        feature_reflection_text = feature_panel_cache["feature_reflection_text"]
+    elif eeg_sample_available:
         if selected_sample_id is not None:
             feature_sample_idx = int(selected_sample_id)
         else:
@@ -2865,6 +2875,14 @@ def update_dashboard(
         feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
+
+        feature_panel_cache = {
+            "feature_fig": feature_fig,
+            "clinical_explanation": clinical_explanation,
+            "feature_decision_header": feature_decision_header,
+            "feature_balance_bar": feature_balance_bar,
+            "feature_reflection_text": feature_reflection_text,
+        }
     else:
         feature_fig = go.Figure()
         feature_fig.update_layout(
@@ -2880,6 +2898,14 @@ def update_dashboard(
         )
         feature_balance_bar = ""
         feature_reflection_text = ""
+
+        feature_panel_cache = {
+            "feature_fig": feature_fig,
+            "clinical_explanation": clinical_explanation,
+            "feature_decision_header": feature_decision_header,
+            "feature_balance_bar": feature_balance_bar,
+            "feature_reflection_text": feature_reflection_text,
+        }
 
     round_display = f"Round {round_number}"
     labeled_count = f"{len(labeled_idx)}/{len(X_train)}"
