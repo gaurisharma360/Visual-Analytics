@@ -47,7 +47,7 @@
 /* Main workspace grid */
 .workspace-grid {
     gap: 6px !important;
-    overflow-y: auto !important;
+    overflow-y: visible !important;
 }
 
 /* Left and right columns should take equal space */

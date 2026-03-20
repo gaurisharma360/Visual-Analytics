@@ -2161,24 +2161,15 @@ app.layout = html.Div([
         "marginBottom": "6px",
     }),
 
-    # Main workspace - left: embedding + annotation; right: (uncertainty + confusion), learning, feature explanation
+    # Main workspace layout: row1 UMAP+uncertainty, row2 EEG+learning (same sizing), row3 SHAP+sankey.
     html.Div([
         html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 dcc.Graph(id="pca-embedding", style={"flex": "1 1 auto", "minHeight": "200px"},
-                      config={'responsive': True, 'displayModeBar': 'hover'}),
+                          config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
-                    dcc.RadioItems(
-                        id="embedding-space-mode",
-                        options=[
-                            {"label": " Model UMAP", "value": "model"},
-                        ],
-                        value="model",
-                        inline=True,
-                        style={"fontSize": "9px", "marginRight": "8px"},
-                    ),
                     dcc.RadioItems(
                         id="pca-view-mode",
                         options=[
@@ -2194,16 +2185,16 @@ app.layout = html.Div([
                         id="sample-filter",
                         options=[
                             {"label": " All", "value": "all"},
-                            {"label": " Lab", "value": "labeled"},
-                            {"label": " Unlab", "value": "unlabeled"},
+                            {"label": " Labeled", "value": "labeled"},
+                            {"label": " Unlabeled", "value": "unlabeled"},
                         ],
                         value="all",
                         inline=True,
                         style={"fontSize": "9px"},
                     ),
-                ], className="radio-controls control-row", style={"display": "flex", "gap": "4px", "flexWrap": "wrap", "paddingTop": "2px"}),
-            ], style={
-                "flex": "1 1 0",
+                ], className="radio-controls control-row",
+                    style={"display": "flex", "gap": "4px", "flexWrap": "wrap", "paddingTop": "2px"}),
+            ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
@@ -2213,93 +2204,39 @@ app.layout = html.Div([
                 "display": "flex",
                 "flexDirection": "column",
                 "overflow": "hidden",
-            }, className="viz-panel"),
+            }),
 
             html.Div([
-                html.H3("Annotation Panel", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"}, config={'responsive': True, 'displayModeBar': 'hover'}),
-                html.Div(
-                    id="clinical-explanation",
-                    style={
-                        "marginTop": "4px",
-                        "fontSize": "10px",
-                        "color": "#334155",
-                        "backgroundColor": "#f8fafc",
-                        "border": "1px solid #e2e8f0",
-                        "borderRadius": "6px",
-                        "padding": "6px",
-                        "lineHeight": "1.35",
-                        "overflow": "auto",
-                        "maxHeight": "60px",
-                    },
-                ),
-            ], style={
-                "flex": "1 1 0",
+                html.H3("Uncertainty",
+                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "200px"},
+                          config={'responsive': True}),
+            ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
-                "padding": "4px",
+                "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
                 "overflow": "hidden",
-            }, className="viz-panel"),
-        ], className="left-column", style={
-            "display": "flex",
-            "flexDirection": "column",
-            "gap": "4px",
-            "minWidth": "0",
+            }),
+        ], style={
+            "display": "grid",
+            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gap": "6px",
+            "alignItems": "stretch",
             "minHeight": "0",
-            "height": "100%",
         }),
 
         html.Div([
             html.Div([
-                html.Div([
-                    html.H3("Uncertainty", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                    dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
-                ], style={
-                    "minWidth": "0",
-                    "minHeight": "0",
-                    "backgroundColor": "#ffffff",
-                    "border": "1px solid #e2e8f0",
-                    "borderRadius": "8px",
-                    "padding": "5px",
-                    "display": "flex",
-                    "flexDirection": "column",
-                    "overflow": "hidden",
-                }, className="viz-panel"),
-
-                html.Div([
-                    html.H3("Learning", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                    dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
-                ], style={
-                    "minWidth": "0",
-                    "minHeight": "0",
-                    "backgroundColor": "#ffffff",
-                    "border": "1px solid #e2e8f0",
-                    "borderRadius": "8px",
-                    "padding": "5px",
-                    "display": "flex",
-                    "flexDirection": "column",
-                    "overflow": "hidden",
-                }, className="viz-panel"),
-            ], className="right-row1", style={
-                "display": "grid",
-                "gridTemplateColumns": "1fr 1.2fr",
-                "gap": "6px",
-                "alignItems": "stretch",
-                "minHeight": "0",
-                "flex": "0 0 auto",
-                "height": "45%",
-            }),
-
-            html.Div([
-                html.H3("Prediction Flow Across Rounds", style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "150px"}, config={'responsive': True}),
-            ], style={
-                "flex": "1 1 auto",
+                html.H3("Annotation Panel",
+                        style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"},
+                          config={'responsive': True, 'displayModeBar': 'hover'}),
+            ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
@@ -2309,15 +2246,40 @@ app.layout = html.Div([
                 "display": "flex",
                 "flexDirection": "column",
                 "overflow": "hidden",
-            }, className="viz-panel"),
+            }),
 
             html.Div([
-                html.H3("Feature Importance", style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.Div(id="feature-decision-header"),
+                html.H3("Learning",
+                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
+                          config={'responsive': True}),
+            ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "5px",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflow": "hidden",
+            }),
+        ], style={
+            "display": "grid",
+            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gap": "6px",
+            "alignItems": "stretch",
+            "minHeight": "0",
+        }),
+
+        html.Div([
+            html.Div([
+                html.H3("Feature Importance",
+                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 html.Div(id="feature-balance-bar"),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "minHeight": "150px"},
+                    style={"flex": "1 1 auto", "minHeight": "180px"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
@@ -2325,8 +2287,7 @@ app.layout = html.Div([
                     },
                 ),
                 html.Div(id="feature-reflection-text"),
-            ], style={
-                "flex": "1 1 auto",
+            ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
                 "backgroundColor": "#ffffff",
@@ -2336,25 +2297,40 @@ app.layout = html.Div([
                 "display": "flex",
                 "flexDirection": "column",
                 "overflow": "hidden",
-            }, className="viz-panel"),
-        ], className="right-column", style={
-            "display": "flex",
-            "flexDirection": "column",
+            }),
+
+            html.Div([
+                html.H3("Prediction Flow Across Rounds",
+                        style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "180px"},
+                          config={'responsive': True}),
+            ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "4px",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflow": "hidden",
+            }),
+        ], style={
+            "display": "grid",
+            "gridTemplateColumns": "1fr 1fr",
             "gap": "6px",
-            "minWidth": "0",
+            "alignItems": "stretch",
             "minHeight": "0",
-            "height": "100%",
-            "overflow": "hidden",
         }),
     ], className="main-workspace workspace-grid", style={
-        "display": "grid",
-        "gridTemplateColumns": "1.2fr 1fr",
-        "gap": "4px",
+        "display": "flex",
+        "flexDirection": "column",
+        "gap": "6px",
         "flex": "1 1 auto",
         "minHeight": "0",
-        "height": "100%",
-        "overflow": "hidden",
-        "alignItems": "stretch",
+        "height": "auto",
+        "overflowY": "visible",
+        "overflowX": "hidden",
     }),
 
     # Hidden perturbation mount to keep callback IDs available without showing the panel.
@@ -2373,14 +2349,15 @@ app.layout = html.Div([
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "100dvh",
+    "height": "auto",
     "minHeight": "100vh",
     "maxHeight": "none",
     "padding": "6px",
     "boxSizing": "border-box",
     "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
     "backgroundColor": "#f1f5f9",
-    "overflow": "auto",
+    "overflowY": "auto",
+    "overflowX": "hidden",
 }, className="app-shell")
 
 
@@ -2433,8 +2410,6 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Output("embedding-title", "children"),
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
-    Output("clinical-explanation", "children"),
-    Output("feature-decision-header", "children"),
     Output("feature-balance-bar", "children"),
     Output("feature-reflection-text", "children"),
     Input("url", "pathname"),
@@ -2442,7 +2417,6 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
     Input("reset-btn", "n_clicks"),
-    Input("embedding-space-mode", "value"),
     Input("pca-view-mode", "value"),
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
@@ -2456,7 +2430,6 @@ def update_dashboard(
         train_clicks,
         confidence_value,
         reset_clicks,
-        embedding_space_mode,
         pca_view_mode,
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
@@ -2839,6 +2812,9 @@ def update_dashboard(
     sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
 
+    # Embedding-space toggle removed from UI; keep model-space embedding fixed.
+    embedding_space_mode = "model"
+
     embedding_fig, embedding_type = build_embedding_figure(
         pca_view_mode,
         embedding_space_mode,
@@ -2855,8 +2831,6 @@ def update_dashboard(
 
     if use_cached_feature_panel:
         feature_fig = feature_panel_cache["feature_fig"]
-        clinical_explanation = feature_panel_cache["clinical_explanation"]
-        feature_decision_header = feature_panel_cache["feature_decision_header"]
         feature_balance_bar = feature_panel_cache["feature_balance_bar"]
         feature_reflection_text = feature_panel_cache["feature_reflection_text"]
     elif eeg_sample_available:
@@ -2867,39 +2841,13 @@ def update_dashboard(
 
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
-        clinical_explanation = "Click one or more feature bars to inspect clinically relevant EEG evidence."
-        if selected_features:
-            attribution_data = compute_feature_attributions(feature_sample_idx)
-            contribution_value = None
-            if attribution_data is not None:
-                feature_names = attribution_data["feature_names"]
-                attributions = attribution_data["attributions"]
-                feature_to_idx = {name: idx for idx, name in enumerate(feature_names)}
-                if selected_feature in feature_to_idx:
-                    contribution_value = float(attributions[feature_to_idx[selected_feature]])
-
-            if contribution_value is not None:
-                direction_text = "toward seizure" if contribution_value >= 0 else "toward non-seizure"
-                clinical_explanation = (
-                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                    f"Focus: {selected_feature} attribution={contribution_value:+.4f} ({direction_text}). "
-                    f"{get_clinical_feature_explanation(selected_feature)}"
-                )
-            else:
-                clinical_explanation = (
-                    f"Selected ({len(selected_features)}): {', '.join(selected_features)}. "
-                    f"Focus: {selected_feature}. {get_clinical_feature_explanation(selected_feature)}"
-                )
-
         # Generate decision panel content for Feature Importance panel
-        feature_decision_header, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+        _, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
-            "clinical_explanation": clinical_explanation,
-            "feature_decision_header": feature_decision_header,
             "feature_balance_bar": feature_balance_bar,
             "feature_reflection_text": feature_reflection_text,
         }
@@ -2911,18 +2859,11 @@ def update_dashboard(
             height=260,
             margin=dict(l=120, r=14, t=22, b=44),
         )
-        clinical_explanation = "No EEG sample is currently displayed. Select a sample to view feature contributions."
-        feature_decision_header = html.Span(
-            "Select or queue a sample to see decision insights.",
-            style={"fontSize": "10px", "color": "#94a3b8"},
-        )
         feature_balance_bar = ""
         feature_reflection_text = ""
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
-            "clinical_explanation": clinical_explanation,
-            "feature_decision_header": feature_decision_header,
             "feature_balance_bar": feature_balance_bar,
             "feature_reflection_text": feature_reflection_text,
         }
@@ -2954,8 +2895,6 @@ def update_dashboard(
         f"{embedding_type} Embedding View",
         queue_status,
         current_sample_idx,
-        clinical_explanation,
-        feature_decision_header,
         feature_balance_bar,
         feature_reflection_text,
     )
