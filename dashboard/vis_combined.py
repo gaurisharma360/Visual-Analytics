@@ -2277,10 +2277,10 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Feature Importance",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.Div(id="feature-balance-bar"),
+                html.Div(id="feature-balance-bar", style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "minHeight": "180px"},
+                    style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
@@ -2302,7 +2302,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Prediction Flow Across Rounds",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "180px"},
+                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
                 "minWidth": "0",

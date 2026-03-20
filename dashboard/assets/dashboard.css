@@ -2,13 +2,13 @@
 
 /* App shell - allow vertical scroll when content exceeds viewport */
 .app-shell {
-    overflow-y: auto !important;
+    overflow-y: scroll !important;
     overflow-x: hidden !important;
 }
 
 /* Let panels scroll internally when content gets dense. */
 .viz-panel {
-    overflow: auto !important;
+    overflow: hidden !important;
 }
 
 /* Graph containers should fill available space */
