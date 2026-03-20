@@ -823,6 +823,7 @@ def initialize_active_learning():
     global annotation_queue, selected_sample_id
     global annotations_this_round
     global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global shap_explainer
 
     train_history = []
     test_history = []
@@ -850,8 +851,8 @@ def initialize_active_learning():
         y_train[labeled_idx],
         subjects_train[labeled_idx],
     )
-
-    initialize_shap_explainer()
+    # SHAP should refresh only after explicit training actions.
+    shap_explainer = None
 
     X_train_umap_model_dgrid = compute_model_umap_embedding()
 
@@ -2825,16 +2826,26 @@ def update_dashboard(
     importance_mode = "contribution"
     selected_feature = selected_features[-1] if selected_features else None
 
-    use_cached_feature_panel = trigger_id == "annotate-btn" and feature_panel_cache is not None
+    current_feature_sample_idx = None
+    if eeg_sample_available:
+        if selected_sample_id is not None:
+            current_feature_sample_idx = int(selected_sample_id)
+        elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
+            current_feature_sample_idx = int(annotation_queue[current_pointer])
+
+    cache_matches_context = (
+        feature_panel_cache is not None
+        and feature_panel_cache.get("sample_idx") == current_feature_sample_idx
+        and feature_panel_cache.get("selected_features") == tuple(selected_features)
+    )
+
+    use_cached_feature_panel = trigger_id == "annotate-btn" and cache_matches_context
 
     if use_cached_feature_panel:
         feature_fig = feature_panel_cache["feature_fig"]
         feature_balance_bar = feature_panel_cache["feature_balance_bar"]
     elif eeg_sample_available:
-        if selected_sample_id is not None:
-            feature_sample_idx = int(selected_sample_id)
-        else:
-            feature_sample_idx = int(annotation_queue[current_pointer])
+        feature_sample_idx = int(current_feature_sample_idx)
 
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
@@ -2846,6 +2857,8 @@ def update_dashboard(
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
+            "sample_idx": feature_sample_idx,
+            "selected_features": tuple(selected_features),
         }
     else:
         feature_fig = go.Figure()
@@ -2860,6 +2873,8 @@ def update_dashboard(
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
+            "sample_idx": None,
+            "selected_features": tuple(selected_features),
         }
 
     round_display = f"Round {round_number}"
