@@ -6,9 +6,9 @@
     overflow-x: hidden !important;
 }
 
-/* Ensure all viz panels don't overflow */
+/* Let panels scroll internally when content gets dense. */
 .viz-panel {
-    overflow: hidden !important;
+    overflow: auto !important;
 }
 
 /* Graph containers should fill available space */
@@ -44,20 +44,19 @@
     grid-auto-rows: minmax(20px, auto) !important;
 }
 
-/* Main workspace grid */
+/* Main workspace rows */
 .workspace-grid {
     gap: 6px !important;
     overflow-y: visible !important;
 }
 
-/* Left and right columns should take equal space */
-.left-column,
-.right-column {
-    gap: 6px !important;
-    overflow: hidden !important;
+.workspace-row {
+    min-width: 0 !important;
 }
 
-/* Right row 1 (uncertainty + learning) */
+/* Legacy selectors retained for compatibility if older layouts are loaded. */
+.left-column,
+.right-column,
 .right-row1 {
     gap: 6px !important;
 }
@@ -69,7 +68,7 @@
 
 /* Ensure Dash components don't exceed parent bounds */
 [data-dash-is="Graph"] {
-    min-height: 150px !important;
+    min-height: 170px !important;
 }
 
 /* Slider container */
@@ -77,14 +76,57 @@
     width: 100% !important;
 }
 
-/* Responsive adjustments for smaller screens */
+/* Responsive adjustments */
+@media (max-width: 1280px) {
+    .workspace-row-top,
+    .workspace-row-middle {
+        grid-template-columns: 1.8fr 1fr !important;
+    }
+
+    .top-bar {
+        gap: 10px !important;
+    }
+}
+
 @media (max-width: 1024px) {
-    .workspace-grid {
+    .top-bar {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+
+    .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .workspace-row {
         grid-template-columns: 1fr !important;
     }
 
-    .right-row1 {
+    [data-dash-is="Graph"] {
+        min-height: 220px !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .app-shell {
+        padding: 4px !important;
+    }
+
+    .button-group {
+        width: 100% !important;
+    }
+
+    .button-group button {
+        width: 100% !important;
+        margin-left: 0 !important;
+    }
+
+    .kpi-grid {
         grid-template-columns: 1fr !important;
+    }
+
+    [data-dash-is="Graph"] {
+        min-height: 190px !important;
     }
 }
 
@@ -101,9 +143,5 @@
     min-height: 0 !important;
 }
 
-/* Fix clinical explanation box sizing */
-#clinical-explanation {
-    overflow-y: auto !important;
-    max-height: 70px !important;
-}
+/* No clinical explanation box in the current annotation panel layout. */
 

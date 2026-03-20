@@ -2222,7 +2222,7 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-top", style={
             "display": "grid",
             "gridTemplateColumns": "2.6fr 1.4fr",
             "gap": "6px",
@@ -2264,7 +2264,7 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-middle", style={
             "display": "grid",
             "gridTemplateColumns": "2.6fr 1.4fr",
             "gap": "6px",
@@ -2314,7 +2314,7 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-bottom", style={
             "display": "grid",
             "gridTemplateColumns": "1fr 1fr",
             "gap": "6px",
