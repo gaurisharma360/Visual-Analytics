@@ -62,7 +62,6 @@ import plotly.express as px
 # ==========================================================
 # GLOBAL RANDOM SEED
 # ==========================================================
-
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
