@@ -2043,22 +2043,6 @@ app.layout = html.Div([
                     "whiteSpace": "nowrap",
                 },
             ),
-            html.Button(
-                "Reset",
-                id="reset-btn",
-                style={
-                    "marginLeft": "8px",
-                    "backgroundColor": "#475569",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "padding": "8px 12px",
-                    "fontWeight": "600",
-                    "cursor": "pointer",
-                    "fontSize": "clamp(10px, 1.2vw, 13px)",
-                    "whiteSpace": "nowrap",
-                },
-            ),
             # NEW: Additional buttons from gauri's version
             html.Button(
                 "Load Top-K Uncertain",
@@ -2342,7 +2326,6 @@ app.layout = html.Div([
             dcc.Slider(id="slider-beta", min=-3, max=3, step=0.1, value=0),
             dcc.Slider(id="slider-kurtosis", min=-3, max=3, step=0.1, value=0),
             html.Div(id="perturbed-prediction"),
-            html.Button("Reset", id="reset-perturbation"),
         ]),
         html.Div(id="perturbation-placeholder"),
     ], style={"display": "none"}),
@@ -2369,18 +2352,17 @@ app.layout = html.Div([
     Output("selected-features-store", "data"),
     Input("feature-importance", "clickData"),
     Input("clear-features-btn", "n_clicks"),
-    Input("reset-btn", "n_clicks"),
     State("selected-features-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_features):
-    """Toggle feature selection on bar click and clear via button/reset."""
+def toggle_feature_selection(click_data, clear_clicks, selected_features):
+    """Toggle feature selection on bar click and clear via button."""
     selected_features = list(selected_features or [])
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
-    if trigger_id in {"clear-features-btn", "reset-btn"}:
+    if trigger_id == "clear-features-btn":
         return []
 
     if trigger_id == "feature-importance" and click_data and "points" in click_data:
@@ -2415,7 +2397,6 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
-    Input("reset-btn", "n_clicks"),
     Input("pca-view-mode", "value"),
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
@@ -2428,7 +2409,6 @@ def update_dashboard(
         annotate_clicks,
         train_clicks,
         confidence_value,
-        reset_clicks,
         pca_view_mode,
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
@@ -2449,15 +2429,15 @@ def update_dashboard(
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
     selected_features = list(selected_features_store or [])
 
-    if trigger_id in ["url", "reset-btn"]:
+    if trigger_id == "url":
         initialize_active_learning()
 
     status_message = "Annotation Phase"
 
-    if stop_active_learning and trigger_id not in ["url", "reset-btn"]:
+    if stop_active_learning and trigger_id != "url":
         status_message = (
             "Stopping criterion met: predictions stable and no uncertain samples. "
-            "Reset to start a new run."
+            "Reload the page to start a new run."
         )
 
     # Handle embedding click
@@ -2468,7 +2448,7 @@ def update_dashboard(
     # NEW: Handle load top-K uncertain button
     if trigger_id == "load-uncertain-btn":
         if stop_active_learning:
-            status_message = "Active learning has converged. Click Reset to run again."
+            status_message = "Active learning has converged. Reload the page to run again."
         else:
             current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
 
@@ -2504,7 +2484,7 @@ def update_dashboard(
     # NEW: Modified annotate logic to work with queue
     if trigger_id == "annotate-btn" and phase == "annotation":
         if stop_active_learning:
-            status_message = "Active learning has converged. Click Reset to run again."
+            status_message = "Active learning has converged. Reload the page to run again."
 
         if annotations_this_round >= batch_size:
             phase = "training"
@@ -2548,7 +2528,7 @@ def update_dashboard(
 
     if trigger_id == "train-btn" and (phase == "training" or annotations_this_round > 0):
         if stop_active_learning:
-            status_message = "Active learning already converged. Click Reset to run again."
+            status_message = "Active learning already converged. Reload the page to run again."
         else:
             round_number += 1
 
@@ -2784,10 +2764,10 @@ def update_dashboard(
     if stop_active_learning:
         status_message = (
             "Stopping criterion met: predictions stable and no uncertain samples. "
-            "Reset to start a new run."
+            "Reload the page to start a new run."
         )
 
-    if trigger_id in [None, "url", "reset-btn"]:
+    if trigger_id in [None, "url"]:
         pending_queue = max(0, len(annotation_queue) - current_pointer)
         status_message = (
             f"Annotation Phase | Annotated: {annotations_this_round}/{batch_size} | "
@@ -2807,9 +2787,9 @@ def update_dashboard(
         confidence_slider_disabled = phase != "annotation"
 
     # Show multi-round test-set flow (round-to-round TN/FP/FN/TP transitions).
-    # Rebuild only when it can actually change (initial load/reset/train).
+    # Rebuild only when it can actually change (initial load/train).
     sankey_output = dash.no_update
-    if trigger_id in [None, "url", "reset-btn", "train-btn"] or sankey_fig_cache is None:
+    if trigger_id in [None, "url", "train-btn"] or sankey_fig_cache is None:
         sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
         sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
@@ -3027,18 +3007,6 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
     except Exception as e:
         return f"Error: {str(e)}"
 
-
-@app.callback(
-    Output("slider-delta", "value"),
-    Output("slider-theta", "value"),
-    Output("slider-beta", "value"),
-    Output("slider-kurtosis", "value"),
-    Input("reset-perturbation", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reset_perturbation_sliders(n_clicks):
-    """Reset all perturbation sliders to 0."""
-    return 0, 0, 0, 0
 
 
 if __name__ == "__main__":
