@@ -752,6 +752,7 @@ current_confidence_threshold = default_confidence_threshold
 annotations_this_round = 0
 previous_predictions = None
 prediction_history = []
+test_prediction_history = []
 sankey_fig_cache = None
 feature_panel_cache = None
 stable_rounds = 0
@@ -821,7 +822,7 @@ def initialize_active_learning():
     global current_confidence_threshold, X_train_umap_model_dgrid
     global annotation_queue, selected_sample_id
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
 
     train_history = []
     test_history = []
@@ -861,7 +862,9 @@ def initialize_active_learning():
     annotations_this_round = 0
     previous_predictions = predict_binary_with_threshold(X_train)
     prediction_history = [previous_predictions.copy()]
-    sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
+    test_predictions = predict_binary_with_threshold(X_test)
+    test_prediction_history = [test_predictions.copy()]
+    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
     feature_panel_cache = None
     stable_rounds = 0
     stop_active_learning = False
@@ -958,39 +961,30 @@ def build_confusion_heatmap(cm):
 
 
 def build_sankey_confusion(y_true, y_pred):
-    """Build a Sankey diagram showing true-to-predicted class flow with class-normalized values."""
+    """Build a Sankey diagram showing true-to-predicted class flow with raw counts."""
     tn = int(np.sum((y_true == 0) & (y_pred == 0)))
     fp = int(np.sum((y_true == 0) & (y_pred == 1)))
     fn = int(np.sum((y_true == 1) & (y_pred == 0)))
     tp = int(np.sum((y_true == 1) & (y_pred == 1)))
 
-    # Normalize within class to handle imbalance
-    total_non_seizure = tn + fp + 1e-6
-    total_seizure = tp + fn + 1e-6
-    
-    tn_normalized = tn / total_non_seizure
-    fp_normalized = fp / total_non_seizure
-    fn_normalized = fn / total_seizure
-    tp_normalized = tp / total_seizure
-
     labels = [
-        "True: Non-Seizure",
-        "True: Seizure",
-        "Pred: Non-Seizure",
-        "Pred: Seizure",
+        f"True: Non-Seizure ({tn + fp})",
+        f"True: Seizure ({fn + tp})",
+        f"Pred: Non-Seizure ({tn + fn})",
+        f"Pred: Seizure ({fp + tp})",
     ]
 
     source = [0, 0, 1, 1]
     target = [2, 3, 2, 3]
-    values = [tn_normalized, fp_normalized, fn_normalized, tp_normalized]
+    values = [tn, fp, fn, tp]
     colors = ["#2563eb", "#ef4444", "#f97316", "#22c55e"]
-    
-    # Create hover text with label, count, and percentage
+
+    # Hover text with exact confusion matrix counts.
     hover_text = [
-        f"TN (True Negative)<br>Count: {tn}<br>Rate: {tn_normalized:.1%}",
-        f"FP (False Positive)<br>Count: {fp}<br>Rate: {fp_normalized:.1%}",
-        f"FN (False Negative)<br>Count: {fn}<br>Rate: {fn_normalized:.1%}",
-        f"TP (True Positive)<br>Count: {tp}<br>Rate: {tp_normalized:.1%}",
+        f"TN (True Negative)<br>Count: {tn}",
+        f"FP (False Positive)<br>Count: {fp}",
+        f"FN (False Negative)<br>Count: {fn}",
+        f"TP (True Positive)<br>Count: {tp}",
     ]
 
     fig = go.Figure(
@@ -1030,7 +1024,7 @@ def build_sankey_confusion(y_true, y_pred):
 
 
 def build_multiround_sankey(pred_history, y_true):
-    """Build Sankey showing TN/FP/FN/TP transitions across rounds with class-normalized flows."""
+    """Build Sankey showing TN/FP/FN/TP transitions across rounds using raw counts."""
     if pred_history is None or len(pred_history) == 0:
         fig = go.Figure()
         fig.update_layout(
@@ -1056,9 +1050,6 @@ def build_multiround_sankey(pred_history, y_true):
         return build_sankey_confusion(y_true, np.asarray(pred_history[0]))
 
     y_true = np.asarray(y_true)
-    total_non_seizure = max(int(np.sum(y_true == 0)), 1)
-    total_seizure = max(int(np.sum(y_true == 1)), 1)
-    sample_weights = np.where(y_true == 0, 1.0 / total_non_seizure, 1.0 / total_seizure)
 
     category_code = {
         (0, 0): "TN",
@@ -1072,6 +1063,15 @@ def build_multiround_sankey(pred_history, y_true):
         (1, 0): "#f97316",
         (1, 1): "#22c55e",
     }
+
+    round_category_counts = []
+    for preds in pred_history:
+        preds_arr = np.asarray(preds).astype(int)
+        counts = {}
+        for key in category_code:
+            t_label, p_label = key
+            counts[key] = int(np.sum((y_true == t_label) & (preds_arr == p_label)))
+        round_category_counts.append(counts)
 
     labels = []
     node_keys = []
@@ -1088,7 +1088,8 @@ def build_multiround_sankey(pred_history, y_true):
         key = (round_idx, true_label, pred_label)
         if key not in node_map:
             node_map[key] = len(labels)
-            labels.append(f"R{round_idx} {category_code[(true_label, pred_label)]}")
+            count = round_category_counts[round_idx][(true_label, pred_label)]
+            labels.append(f"R{round_idx} {category_code[(true_label, pred_label)]} ({count})")
             node_keys.append(key)
         return node_map[key]
 
@@ -1108,23 +1109,20 @@ def build_multiround_sankey(pred_history, y_true):
                 flow_index[key] = len(source)
                 source.append(src)
                 target.append(dst)
-                values.append(float(sample_weights[i]))
+                values.append(1.0)
                 flow_counts.append(1)
             else:
                 idx = flow_index[key]
-                values[idx] += float(sample_weights[i])
+                values[idx] += 1.0
                 flow_counts[idx] += 1
 
     for idx, (src, dst) in enumerate(zip(source, target)):
         dst_key = node_keys[dst]
         dst_category = (dst_key[1], dst_key[2])
         count = flow_counts[idx]
-        norm_rate = values[idx]
-
         link_colors.append(category_color[dst_category])
         hover_text.append(
             f"<br>Count: {count}"
-            f"<br>Normalized: {norm_rate:.1%}"
         )
 
     node_colors = [category_color[(k[1], k[2])] for k in node_keys]
@@ -2471,7 +2469,7 @@ def update_dashboard(
     global current_confidence_threshold, oracle_annotated_idx
     global annotation_queue, selected_sample_id  # NEW
     global annotations_this_round
-    global previous_predictions, prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -2599,6 +2597,11 @@ def update_dashboard(
             sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
             specificity_new = tn / (tn + fp) if (tn + fp) else 0
 
+            print(
+                f"[ROUND {round_number}] TN={tn} FP={fp} FN={fn} TP={tp} "
+                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f}"
+            )
+
             # Record history for this round
             train_history.append(train_acc_new)
             test_history.append(test_acc_new)
@@ -2630,6 +2633,7 @@ def update_dashboard(
 
             previous_predictions = current_predictions.copy()
             prediction_history.append(current_predictions.copy())
+            test_prediction_history.append(test_pred_new.copy())
 
             if stable_rounds >= stability_required_rounds and len(current_batch) == 0:
                 stop_active_learning = True
@@ -2663,6 +2667,12 @@ def update_dashboard(
         sensitivity_history.append(sensitivity)
         specificity_history.append(specificity)
         round_history.append(0)
+        if len(test_prediction_history) == 0:
+            test_prediction_history.append(test_pred.copy())
+        print(
+            f"[ROUND 0] TN={tn} FP={fp} FN={fn} TP={tp} "
+            f"| Sensitivity={sensitivity:.4f} Specificity={specificity:.4f}"
+        )
 
     pending_queue = max(0, len(annotation_queue) - current_pointer)
 
@@ -2822,10 +2832,9 @@ def update_dashboard(
         train_disabled = stop_active_learning or annotations_this_round == 0
         confidence_slider_disabled = phase != "annotation"
 
-    sankey_output = dash.no_update
-    if trigger_id in [None, "url", "reset-btn", "train-btn"] or sankey_fig_cache is None:
-        sankey_fig_cache = build_multiround_sankey(prediction_history, y_train)
-        sankey_output = sankey_fig_cache
+    # Show multi-round test-set flow (round-to-round TN/FP/FN/TP transitions).
+    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
+    sankey_output = sankey_fig_cache
     learning_curve_fig = build_learning_curve()
 
     embedding_fig, embedding_type = build_embedding_figure(
