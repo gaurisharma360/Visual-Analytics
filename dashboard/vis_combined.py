@@ -1565,6 +1565,7 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             custom_data=[
                 "Sample_ID",
                 "Predicted_Label",
+                "True_Label",
                 "Status",
                 "Threshold_Display",
                 "Displayed_Label",
@@ -1573,10 +1574,10 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
             color_discrete_map={"Seizure": "#e74c3c", "Non-Seizure": "#3498db"},
             hover_data={
                 "Predicted_Label": True,
+                "True_Label": True,
                 "Status": True,
                 "Threshold_Display": True,
                 "Displayed_Prob": ":.2f",
-                # "True_Label": True,
                 # "Correct": True,
                 # "Uncertainty": ":.2f",
                 # "Prob_Seizure": ":.2f",
@@ -1597,9 +1598,10 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
         embedding_fig.update_traces(
             hovertemplate=(
                 "Predicted Label: %{customdata[1]}<br>"
-                "Status: %{customdata[2]}<br>"
-                "Threshold Status: %{customdata[3]}<br>"
-                "%{customdata[4]}: %{customdata[5]:.2f}<extra></extra>"
+                "True Label: %{customdata[2]}<br>"
+                "Status: %{customdata[3]}<br>"
+                "Threshold Status: %{customdata[4]}<br>"
+                "%{customdata[5]}: %{customdata[6]:.2f}<extra></extra>"
             )
         )
     else:
