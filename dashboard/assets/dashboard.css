@@ -2,13 +2,14 @@
 
 /* App shell - allow vertical scroll when content exceeds viewport */
 .app-shell {
-    overflow-y: scroll !important;
+    overflow-y: auto !important;
     overflow-x: hidden !important;
 }
 
-/* Let panels scroll internally when content gets dense. */
+/* Avoid clipping inside panels; page scroll handles overflow. */
 .viz-panel {
-    overflow: hidden !important;
+    overflow: visible !important;
+    min-width: 0 !important;
 }
 
 /* Graph containers should fill available space */
@@ -47,7 +48,9 @@
 /* Main workspace rows */
 .workspace-grid {
     gap: 6px !important;
+    height: auto !important;
     overflow-y: visible !important;
+    overflow-x: hidden !important;
 }
 
 .workspace-row {
