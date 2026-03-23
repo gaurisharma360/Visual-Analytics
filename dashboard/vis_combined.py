@@ -629,6 +629,13 @@ def train_model(X_train, y_train, subjects_train):
     )
 
     grid.fit(X_train, y_train)
+    
+    # Print best hyperparameters to terminal
+    best_c = grid.best_params_.get("clf__C")
+    best_penalty = grid.best_params_.get("clf__penalty")
+    best_cv_score = grid.best_score_
+    print(f"[GRIDSEARCH] Best C: {best_c} | Best Penalty: {best_penalty} | Best CV Score: {best_cv_score:.4f}")
+    
     return grid.best_estimator_
 
 
@@ -2524,8 +2531,8 @@ def update_dashboard(
                 selected_sample_id = None
                 status_message = f"Annotated ({annotations_this_round}/{batch_size}). Select next sample or load Top-K uncertain."
 
-    if trigger_id == "train-btn" and (phase == "training" or annotations_this_round > 0):
-        if stop_active_learning:
+    if trigger_id == "train-btn" and not stop_active_learning:
+        if False:  # Removed redundant check
             status_message = "Active learning already converged. Reload the page to run again."
         else:
             round_number += 1
@@ -2549,16 +2556,22 @@ def update_dashboard(
             sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
             specificity_new = tn / (tn + fp) if (tn + fp) else 0
 
+            # Extract and print hyperparameters from trained model
+            trained_clf = model.named_steps['clf']
+            c_value = trained_clf.C
+            penalty = trained_clf.penalty
+            
             print(
                 f"[ROUND {round_number}] TN={tn} FP={fp} FN={fn} TP={tp} "
-                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f}"
+                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f} "
+                f"| C={c_value} | Penalty={penalty}"
             )
 
             # Record history for this round
             train_history.append(train_acc_new)
             test_history.append(test_acc_new)
             sensitivity_history.append(sensitivity_new)
-            specificity_history.append(sensitivity_new)
+            specificity_history.append(specificity_new)
             round_history.append(round_number)
 
             # Now reset for next round
@@ -2790,6 +2803,21 @@ def update_dashboard(
     if trigger_id in [None, "url", "train-btn"] or sankey_fig_cache is None:
         sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
         sankey_output = sankey_fig_cache
+
+    # SAFETY SYNC: Ensure all history arrays are in sync before plotting
+    min_len = min(
+        len(round_history),
+        len(train_history),
+        len(test_history),
+        len(sensitivity_history),
+        len(specificity_history)
+    )
+    round_history[:] = round_history[:min_len]
+    train_history[:] = train_history[:min_len]
+    test_history[:] = test_history[:min_len]
+    sensitivity_history[:] = sensitivity_history[:min_len]
+    specificity_history[:] = specificity_history[:min_len]
+
     learning_curve_fig = build_learning_curve()
 
     # Embedding-space toggle removed from UI; keep model-space embedding fixed.
@@ -3030,5 +3058,5 @@ if __name__ == "__main__":
     print("5. Click feature bars to see EEG evidence")
     print("=" * 70 + "\n")
 
-    app.run(debug=True, use_reloader=False)
+    app.run(debug=True, use_reloader=True)
 
