@@ -1744,7 +1744,7 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
     return embedding_fig, embedding_type
 
 
-def build_uncertainty_histogram(confidence_threshold):
+def build_uncertainty_histogram(confidence_threshold, scale_mode="log"):
     all_train_probs = model.predict_proba(X_train)
     all_train_uncertainty = 1 - np.max(all_train_probs, axis=1)
     all_train_confidence = np.max(all_train_probs, axis=1)
@@ -1847,11 +1847,13 @@ def build_uncertainty_histogram(confidence_threshold):
         annotation_position="top left",
     )
 
+    use_log_scale = scale_mode != "linear"
+
     hist_fig.update_layout(
         title=None,
         title_font=dict(size=14),
         xaxis_title="Uncertainty (1 - max_confidence)",
-        yaxis_title="Count (log)",
+        yaxis_title="Count (log)" if use_log_scale else "Count (linear)",
         barmode="stack",
         bargap=0.1,
         template="plotly_white",
@@ -1871,9 +1873,9 @@ def build_uncertainty_histogram(confidence_threshold):
         ),
         xaxis=dict(tickfont=dict(size=9), automargin=True, title_standoff=6),
         yaxis=dict(
-            type="log",
+            type="log" if use_log_scale else "linear",
             tickfont=dict(size=9),
-            dtick=1,
+            dtick=1 if use_log_scale else None,
             automargin=True,
             title_standoff=6,
         ),
@@ -2201,6 +2203,16 @@ app.layout = html.Div([
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "200px"},
                           config={'responsive': True}),
+                dcc.RadioItems(
+                    id="uncertainty-scale-mode",
+                    options=[
+                        {"label": " Log", "value": "log"},
+                        {"label": " Linear", "value": "linear"},
+                    ],
+                    value="log",
+                    inline=True,
+                    style={"fontSize": "9px", "paddingTop": "2px"},
+                ),
             ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
@@ -2239,31 +2251,6 @@ app.layout = html.Div([
             }),
 
             html.Div([
-                html.H3("Learning",
-                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
-                          config={'responsive': True}),
-            ], className="viz-panel", style={
-                "minWidth": "0",
-                "minHeight": "0",
-                "backgroundColor": "#ffffff",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "8px",
-                "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
-            }),
-        ], className="workspace-row workspace-row-middle", style={
-            "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
-            "gap": "6px",
-            "alignItems": "stretch",
-            "minHeight": "0",
-        }),
-
-        html.Div([
-            html.Div([
                 html.H3("Feature Importance",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 html.Div(id="feature-balance-bar", style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
@@ -2287,7 +2274,15 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
+        ], className="workspace-row workspace-row-middle", style={
+            "display": "grid",
+            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gap": "6px",
+            "alignItems": "stretch",
+            "minHeight": "0",
+        }),
 
+        html.Div([
             html.Div([
                 html.H3("Prediction Flow Across Rounds",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
@@ -2304,9 +2299,26 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
+
+            html.Div([
+                html.H3("Learning",
+                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
+                          config={'responsive': True}),
+            ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "5px",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflow": "hidden",
+            }),
         ], className="workspace-row workspace-row-bottom", style={
             "display": "grid",
-            "gridTemplateColumns": "1fr 1fr",
+            "gridTemplateColumns": "2.6fr 1.4fr",
             "gap": "6px",
             "alignItems": "stretch",
             "minHeight": "0",
@@ -2406,6 +2418,7 @@ def toggle_feature_selection(click_data, clear_clicks, selected_features):
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
+    Input("uncertainty-scale-mode", "value"),
     Input("selected-features-store", "data"),
     prevent_initial_call=False,
 )
@@ -2418,6 +2431,7 @@ def update_dashboard(
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
+        uncertainty_scale_mode,
         selected_features_store,
 ):
     global labeled_idx, unlabeled_idx
@@ -2829,7 +2843,10 @@ def update_dashboard(
         current_confidence_threshold,
         sample_filter,
     )
-    uncertainty_hist = build_uncertainty_histogram(current_confidence_threshold)
+    uncertainty_hist = build_uncertainty_histogram(
+        current_confidence_threshold,
+        uncertainty_scale_mode,
+    )
 
     # Keep feature contributions hidden unless the EEG panel is actively showing a sample.
     importance_mode = "contribution"

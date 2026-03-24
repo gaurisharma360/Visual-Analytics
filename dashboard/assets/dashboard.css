@@ -12,39 +12,39 @@ body,
     margin: 0;
     padding: 0;
 }
-
-.app-shell {
+    .workspace-row-middle {
+    }
     width: 100%;
     height: 100%;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-}
 
+    .top-bar {
+        gap: 10px !important;
+    }
 .top-bar,
 .kpi-grid,
 .workspace-grid,
 .workspace-row,
-.viz-panel {
+
     min-width: 0 !important;
     min-height: 0 !important;
-}
-
-.button-group {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+.control-row {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-}
 
-.workspace-grid {
+/* Radio controls should not wrap excessively */
+    flex-wrap: wrap !important;
     display: flex !important;
     flex-direction: column !important;
     flex: 1 1 auto !important;
-    gap: 6px !important;
+/* Let panels scroll internally when content gets dense. */
     overflow-x: hidden !important;
-    overflow-y: visible !important;
-}
-
-.workspace-row {
+/* App shell - ensure no overflow */
+/* Right row 1 (uncertainty + learning) */
+/* Left and right columns should take equal space */
+    gap: 6px !important;
     display: grid !important;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important;
     gap: 6px !important;
@@ -74,22 +74,90 @@ body,
 .viz-panel [data-dash-is="Graph"] {
     width: 100% !important;
     height: 100% !important;
-    min-width: 0 !important;
-}
-
+/* Main workspace grid */
+    height: 100% !important;
+/* Ensure all viz panels don't overflow */
 [data-dash-is="Graph"] {
     min-height: 140px !important;
+    min-height: 150px !important;
+.right-column {
+    overflow: hidden !important;
+/* Responsive adjustments for smaller screens */
+@media (max-width: 1024px) {
+    min-height: 150px !important;
+    overflow: auto !important;
 }
 
-.plotly-graph-div .modebar {
-    position: relative !important;
+/* Graph containers should fill available space */
+        gap: 8px !important;
+.viz-panel [data-dash-is="Graph"] {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Radio controls should not wrap excessively */
+.radio-controls {
+    flex-wrap: wrap !important;
+}
+
+.control-row {
+        min-height: 180px !important;
+    gap: 8px !important;
+}
+
+/* Button group should not wrap in single line if needed */
+.button-group {
+    flex-wrap: wrap !important;
+}
+
+/* Top bar should compress nicely */
+        width: 100%;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+}
+        width: 100%;
+/* KPI grid should be responsive */
+        font-size: clamp(10px, 2.8vw, 12px) !important;
+.kpi-grid {
+    gap: 6px !important;
+    grid-auto-rows: minmax(20px, auto) !important;
+}
+        gap: 4px !important;
+    }
+
+    .viz-panel {
+        padding: 4px !important;
+
+/* Main workspace rows */
+.workspace-grid {
+        min-height: 170px !important;
+    overflow-y: visible !important;
+}
+    min-height: 170px !important;
+}
+
+/* Slider container */
+.dcc_control > .rc-slider {
+    width: 100% !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1280px) {
+    .workspace-row-top,
+    .workspace-row-middle,
+    .workspace-row-bottom {
+        grid-template-columns: 1.8fr 1fr !important;
+    }
+
+    .top-bar {
+        gap: 10px !important;
+    }
 }
 
 @media (max-width: 1024px) {
     .top-bar {
         flex-direction: column !important;
         align-items: stretch !important;
-        gap: 8px !important;
     }
 
     .kpi-grid {
@@ -101,7 +169,7 @@ body,
     }
 
     [data-dash-is="Graph"] {
-        min-height: 180px !important;
+        min-height: 220px !important;
     }
 }
 
@@ -111,26 +179,58 @@ body,
     }
 
     .button-group {
-        width: 100%;
+        width: 100% !important;
     }
 
     .button-group button {
-        width: 100%;
+        width: 100% !important;
         margin-left: 0 !important;
-        font-size: clamp(10px, 2.8vw, 12px) !important;
     }
 
     .kpi-grid {
         grid-template-columns: 1fr !important;
-        gap: 4px !important;
-    }
-
-    .viz-panel {
-        padding: 4px !important;
     }
 
     [data-dash-is="Graph"] {
-        min-height: 170px !important;
+        min-height: 190px !important;
     }
+}
+
+/* Prevent text overflow in headers */
+.viz-panel h3 {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+/* Ensure flex grow works properly */
+.viz-panel {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+
+/* Fix clinical explanation box sizing */
+#clinical-explanation {
+    overflow-y: auto !important;
+    max-height: 70px !important;
+}
+
+/* Prevent text overflow in headers */
+.viz-panel h3 {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+/* Ensure flex grow works properly */
+.viz-panel {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+
+/* Fix clinical explanation box sizing */
+#clinical-explanation {
+    overflow-y: auto !important;
+    max-height: 70px !important;
 }
 
