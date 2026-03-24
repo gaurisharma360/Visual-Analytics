@@ -29,6 +29,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 try:
     from umap import UMAP
+
     UMAP_AVAILABLE = True
     UMAP_IMPORT_ERROR = None
 except ImportError:
@@ -237,7 +238,8 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
         return np.sqrt(uniform_filter1d(x ** 2, size=window_size, mode="nearest"))
 
     def _window_p2p(x):
-        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size, mode="nearest")
+        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size,
+                                                                                        mode="nearest")
 
     def _top_mask(score, pct=75):
         threshold = np.percentile(score, pct)
@@ -460,7 +462,8 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         html.Span("Model Decision  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
         html.Span("Prediction: ", style={"fontSize": "10px", "color": "#6b7280"}),
         html.Span(pred_label, style={"fontWeight": "700", "fontSize": "11px", "color": pred_color}),
-        html.Span(f"  P(seizure): {pred_prob:.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  P(seizure): {pred_prob:.2f}",
+                  style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Base: {base_value:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Score: {logit:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Method: {method_text}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
@@ -531,7 +534,8 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             lines.append("↑ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
         if top_against:
             lines.append("↓ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
-        lines.append(f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
+        lines.append(
+            f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
         reflection = html.Div([
             html.Span("Model reasoning:  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
             html.Span("  ".join(lines), style={"fontSize": "9px", "color": "#374151", "lineHeight": "1.5"}),
@@ -560,7 +564,8 @@ def get_clinical_feature_explanation(feature_name):
         "Skewness": "High skewness indicates waveform asymmetry, which may arise from non-sinusoidal epileptiform patterns.",
         "Mean": "Baseline drift in the local mean may reveal slow shifts in underlying cortical potential dynamics.",
     }
-    return explanation_map.get(feature_name, "This feature captures a model-relevant EEG pattern for the current segment.")
+    return explanation_map.get(feature_name,
+                               "This feature captures a model-relevant EEG pattern for the current segment.")
 
 
 # ==========================================================
@@ -629,13 +634,13 @@ def train_model(X_train, y_train, subjects_train):
     )
 
     grid.fit(X_train, y_train)
-    
+
     # Print best hyperparameters to terminal
     best_c = grid.best_params_.get("clf__C")
     best_penalty = grid.best_params_.get("clf__penalty")
     best_cv_score = grid.best_score_
     print(f"[GRIDSEARCH] Best C: {best_c} | Best Penalty: {best_penalty} | Best CV Score: {best_cv_score:.4f}")
-    
+
     return grid.best_estimator_
 
 
@@ -1230,7 +1235,8 @@ def _build_embedding_boundary_trace(embedding_coords):
         y=yy[:, 0],
         z=zz,
         showscale=False,
-        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none", showlines=True),
+        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none",
+                      showlines=True),
         line=dict(color="black", width=2, dash="dash"),
         name="Decision Boundary",
         hoverinfo="skip",
@@ -1292,14 +1298,15 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         fig.update_layout(
             title=None,
-            xaxis_title="",
+            xaxis_title="← Non-Seizure  |  Seizure →",
             yaxis_title="",
             template="plotly_white",
-            margin=dict(l=120, r=14, t=34, b=78),
+            height=260,
+            margin=dict(l=120, r=14, t=22, b=44),
             showlegend=False,
         )
 
-        fig.update_xaxes(automargin=True)
+        fig.update_xaxes(automargin=True, title_standoff=6, title_font=dict(size=9, color="#555"))
         fig.update_yaxes(automargin=True)
 
         # Add vertical line at 0
@@ -1308,14 +1315,14 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
         # Group direction labels
         fig.add_annotation(
             text="AGAINST Seizure ◀",
-            xref="paper", yref="paper", x=0.02, y=1.01,
+            xref="paper", yref="paper", x=0.0, y=1.07,
             xanchor="left", showarrow=False,
             font=dict(size=8, color="#2563eb"),
         )
         fig.add_annotation(
             text="▶ FOR Seizure",
-            xref="paper", yref="paper", x=0.74, y=1.01,
-            xanchor="left", showarrow=False,
+            xref="paper", yref="paper", x=1.0, y=1.07,
+            xanchor="right", showarrow=False,
             font=dict(size=8, color="#dc2626"),
         )
 
@@ -1372,12 +1379,13 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="Contribution",
             yaxis_title="",
             template="plotly_white",
-            margin=dict(l=120, r=14, t=30, b=72),
+            height=260,
+            margin=dict(l=120, r=14, t=14, b=44),
             barmode='relative',
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
-                y=1.02,
+                y=1.01,
                 xanchor="center",
                 x=0.5,
                 font=dict(size=8),
@@ -1393,7 +1401,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
         fig.add_annotation(
             text=f"Unc={uncertainty:.3f} | P(seizure)={pred_prob:.3f}",
             xref="paper", yref="paper",
-            x=0.5, y=-0.22,
+            x=0.5, y=-0.14,
             showarrow=False,
             font=dict(size=8, color="#666"),
         )
@@ -2251,13 +2259,14 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Feature Importance",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.Div(id="feature-balance-bar", style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
+                html.Div(id="feature-balance-bar",
+                         style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "minHeight": "240px"},
+                    style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
                     config={
                         'responsive': True,
-                        'displayModeBar': False,
+                        'displayModeBar': 'hover',
                         'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                     },
                 ),
@@ -2327,8 +2336,8 @@ app.layout = html.Div([
         "gap": "6px",
         "flex": "1 1 auto",
         "minHeight": "0",
-        "height": "100%",
-        "overflowY": "auto",
+        "height": "auto",
+        "overflowY": "visible",
         "overflowX": "hidden",
     }),
 
@@ -2347,8 +2356,9 @@ app.layout = html.Div([
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "100vh",
-    "maxHeight": "100vh",
+    "height": "auto",
+    "minHeight": "100vh",
+    "maxHeight": "none",
     "padding": "6px",
     "boxSizing": "border-box",
     "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
@@ -2387,6 +2397,7 @@ def toggle_feature_selection(click_data, clear_clicks, selected_features):
             selected_features.append(feature)
 
     return selected_features
+
 
 @app.callback(
     Output("eeg-graph", "figure"),
@@ -2516,10 +2527,10 @@ def update_dashboard(
                 annotation_queue.append(int(selected_sample_id))
 
         if (
-            not stop_active_learning
-            and phase == "annotation"
-            and len(annotation_queue) > 0
-            and current_pointer < len(annotation_queue)
+                not stop_active_learning
+                and phase == "annotation"
+                and len(annotation_queue) > 0
+                and current_pointer < len(annotation_queue)
         ):
             sample_id = int(annotation_queue.pop(current_pointer))
             if sample_id in unlabeled_idx:
@@ -2571,7 +2582,7 @@ def update_dashboard(
             trained_clf = model.named_steps['clf']
             c_value = trained_clf.C
             penalty = trained_clf.penalty
-            
+
             print(
                 f"[ROUND {round_number}] TN={tn} FP={fp} FN={fn} TP={tp} "
                 f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f} "
@@ -2730,15 +2741,19 @@ def update_dashboard(
             title=f"Sample {selected_sample_id}",
             xaxis_title="Time (samples)",
             yaxis_title="Amplitude (μV)",
+            xaxis=dict(
+                automargin=True,
+                title_standoff=10,
+            ),
             yaxis=dict(range=[GLOBAL_Y_MIN, GLOBAL_Y_MAX]),
             template="plotly_white",
-            margin=dict(l=50, r=20, t=60, b=50),
+            margin=dict(l=50, r=20, t=60, b=90),
             autosize=True,
             hovermode="x unified",
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
-                y=-0.3,
+                y=-0.4,
                 xanchor="center",
                 x=0.5,
                 font=dict(size=10),
@@ -2760,21 +2775,9 @@ def update_dashboard(
     else:
         eeg_fig = go.Figure()
         eeg_fig.update_layout(
+            title="No sample selected or in queue",
             template="plotly_white",
-            margin=dict(l=24, r=24, t=24, b=24),
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            annotations=[
-                dict(
-                    text="No sample selected or in queue",
-                    x=0.5,
-                    y=0.5,
-                    xref="paper",
-                    yref="paper",
-                    showarrow=False,
-                    font=dict(size=13, color="#64748b"),
-                )
-            ],
+            margin=dict(l=40, r=20, t=20, b=40),
             autosize=True,
         )
         current_sample_idx = 0
@@ -2782,11 +2785,11 @@ def update_dashboard(
     # Button states
     annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
     if (
-        phase == "annotation"
-        and annotations_this_round < batch_size
-        and pending_queue == 0
-        and selected_sample_id is not None
-        and selected_sample_id not in labeled_idx
+            phase == "annotation"
+            and annotations_this_round < batch_size
+            and pending_queue == 0
+            and selected_sample_id is not None
+            and selected_sample_id not in labeled_idx
     ):
         annotate_disabled = False
     train_disabled = stop_active_learning or annotations_this_round == 0
@@ -2810,11 +2813,11 @@ def update_dashboard(
         )
         annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
         if (
-            phase == "annotation"
-            and annotations_this_round < batch_size
-            and pending_queue == 0
-            and selected_sample_id is not None
-            and selected_sample_id not in labeled_idx
+                phase == "annotation"
+                and annotations_this_round < batch_size
+                and pending_queue == 0
+                and selected_sample_id is not None
+                and selected_sample_id not in labeled_idx
         ):
             annotate_disabled = False
         train_disabled = stop_active_learning or annotations_this_round == 0
@@ -2869,9 +2872,9 @@ def update_dashboard(
             current_feature_sample_idx = int(annotation_queue[current_pointer])
 
     cache_matches_context = (
-        feature_panel_cache is not None
-        and feature_panel_cache.get("sample_idx") == current_feature_sample_idx
-        and feature_panel_cache.get("selected_features") == tuple(selected_features)
+            feature_panel_cache is not None
+            and feature_panel_cache.get("sample_idx") == current_feature_sample_idx
+            and feature_panel_cache.get("selected_features") == tuple(selected_features)
     )
 
     use_cached_feature_panel = trigger_id == "annotate-btn" and cache_matches_context
@@ -2898,21 +2901,10 @@ def update_dashboard(
     else:
         feature_fig = go.Figure()
         feature_fig.update_layout(
+            title="No sample selected or in queue",
             template="plotly_white",
-            margin=dict(l=24, r=24, t=24, b=24),
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            annotations=[
-                dict(
-                    text="No sample selected or in queue",
-                    x=0.5,
-                    y=0.5,
-                    xref="paper",
-                    yref="paper",
-                    showarrow=False,
-                    font=dict(size=13, color="#64748b"),
-                )
-            ],
+            height=260,
+            margin=dict(l=120, r=14, t=22, b=44),
         )
         feature_balance_bar = ""
 
@@ -3071,8 +3063,6 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
         return f"Error: {str(e)}"
 
 
-
-
 if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COMBINED DASHBOARD - FINAL VERSION")
@@ -3096,5 +3086,3 @@ if __name__ == "__main__":
     print("=" * 70 + "\n")
 
     app.run(debug=True, use_reloader=True)
-
-#back to normal
