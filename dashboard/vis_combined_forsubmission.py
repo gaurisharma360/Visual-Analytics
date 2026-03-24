@@ -1378,7 +1378,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
     return fig
 
 
-def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_threshold, sample_filter):
+def build_embedding_figure(embedding_space_mode, confidence_threshold, sample_filter):
     """Build embedding figure with DGrid transformation and sample filter"""
     if not UMAP_AVAILABLE or X_train_umap_data_dgrid is None:
         if UMAP_IMPORT_ERROR:
@@ -1493,100 +1493,8 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
 
     if plot_df.empty:
         embedding_fig = go.Figure()
-    elif pca_view_mode == "label_status":
-        embedding_fig = px.scatter(
-            plot_df,
-            x="Dim1",
-            y="Dim2",
-            color="Status",
-            custom_data=[
-                "Sample_ID",
-                "Predicted_Label",
-                "Status",
-                "Threshold_Display",
-                "Displayed_Label",
-                "Displayed_Prob",
-            ],
-            color_discrete_map={"Labeled": "#27ae60", "Unlabeled": "#95a5a6"},
-            hover_data={
-                "Predicted_Label": True,
-                "Status": True,
-                "Threshold_Display": True,
-                "Displayed_Prob": ":.2f",
-                # "True_Label": True,
-                # "Uncertainty": ":.2f",
-                # "Prob_Seizure": ":.2f",
-                # "Prob_Non_Seizure": ":.2f",
-                # "Sample_ID": True,
-                # "Queried": True,
-                # "In_Queue": True,
-                # "Threshold_Status": True,
-            },
-            title=None,
-            labels={
-                "Dim1": coord_labels["x"],
-                "Dim2": coord_labels["y"],
-                "Threshold_Display": "Threshold Status",
-                "Displayed_Prob": "Probability",
-            },
-        )
-        embedding_fig.update_traces(
-            hovertemplate=(
-                "Predicted Label: %{customdata[1]}<br>"
-                "Status: %{customdata[2]}<br>"
-                "Threshold Status: %{customdata[3]}<br>"
-                "%{customdata[4]}: %{customdata[5]:.2f}<extra></extra>"
-            )
-        )
-    elif pca_view_mode == "true_class":
-        embedding_fig = px.scatter(
-            plot_df,
-            x="Dim1",
-            y="Dim2",
-            color="True_Label",
-            custom_data=[
-                "Sample_ID",
-                "Predicted_Label",
-                "True_Label",
-                "Status",
-                "Threshold_Display",
-                "Displayed_Label",
-                "Displayed_Prob",
-            ],
-            color_discrete_map={"Seizure": "#e74c3c", "Non-Seizure": "#3498db"},
-            hover_data={
-                "Predicted_Label": True,
-                "True_Label": True,
-                "Status": True,
-                "Threshold_Display": True,
-                "Displayed_Prob": ":.2f",
-                # "Correct": True,
-                # "Uncertainty": ":.2f",
-                # "Prob_Seizure": ":.2f",
-                # "Prob_Non_Seizure": ":.2f",
-                # "Sample_ID": True,
-                # "Queried": True,
-                # "In_Queue": True,
-                # "Threshold_Status": True,
-            },
-            title=None,
-            labels={
-                "Dim1": coord_labels["x"],
-                "Dim2": coord_labels["y"],
-                "Threshold_Display": "Threshold Status",
-                "Displayed_Prob": "Probability",
-            },
-        )
-        embedding_fig.update_traces(
-            hovertemplate=(
-                "Predicted Label: %{customdata[1]}<br>"
-                "True Label: %{customdata[2]}<br>"
-                "Status: %{customdata[3]}<br>"
-                "Threshold Status: %{customdata[4]}<br>"
-                "%{customdata[5]}: %{customdata[6]:.2f}<extra></extra>"
-            )
-        )
     else:
+        # Keep a single uncertainty-based embedding view in submission mode.
         embedding_fig = px.scatter(
             plot_df,
             x="Dim1",
@@ -2107,10 +2015,10 @@ app.layout = html.Div([
         # NEW: Queue status from gauri's version
         html.Div(id="queue-status",
                  style={"fontWeight": "600", "color": "#7c3aed", "fontSize": "clamp(10px, 1.3vw, 12px)",
-                        "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
+                        "whiteSpace": "nowrap", "overflow": "visible", "textOverflow": "clip"}),
     ], className="kpi-grid", style={
         "display": "grid",
-        "gridTemplateColumns": "repeat(auto-fit, minmax(100px, 1fr))",
+        "gridTemplateColumns": "repeat(4, minmax(80px, 1fr)) minmax(320px, 2fr)",
         "alignItems": "center",
         "gap": "6px",
         "padding": "6px 10px",
@@ -2144,22 +2052,11 @@ app.layout = html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 html.Div(
-                    dcc.Graph(id="pca-embedding", style={"height": "100%", "width": "100%"},
+                    dcc.Graph(id="umap-embedding", style={"height": "100%", "width": "100%"},
                               config={'responsive': True, 'displayModeBar': 'hover'}),
                     style={"height": "100%", "width": "100%"}
                 ),
                 html.Div([
-                    dcc.RadioItems(
-                        id="pca-view-mode",
-                        options=[
-                            {"label": " Status", "value": "label_status"},
-                            {"label": " Class", "value": "true_class"},
-                            {"label": " Uncertain", "value": "uncertainty"},
-                        ],
-                        value="uncertainty",
-                        inline=True,
-                        style={"fontSize": "9px", "marginRight": "8px"},
-                    ),
                     dcc.RadioItems(
                         id="sample-filter",
                         options=[
@@ -2406,7 +2303,7 @@ def toggle_feature_selection(click_data, clear_clicks, selected_features):
     Output("status-message", "children"),
     Output("learning-curve", "figure"),
     Output("confusion-heatmap", "figure"),
-    Output("pca-embedding", "figure"),
+    Output("umap-embedding", "figure"),
     Output("uncertainty-histogram", "figure"),
     Output("feature-importance", "figure"),
     Output("round-display", "children"),
@@ -2420,8 +2317,7 @@ def toggle_feature_selection(click_data, clear_clicks, selected_features):
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
-    Input("pca-view-mode", "value"),
-    Input("pca-embedding", "clickData"),  # Capture embedding clicks
+    Input("umap-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
     Input("uncertainty-scale-mode", "value"),
@@ -2433,7 +2329,6 @@ def update_dashboard(
         annotate_clicks,
         train_clicks,
         confidence_value,
-        pca_view_mode,
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
@@ -2466,7 +2361,7 @@ def update_dashboard(
         )
 
     # Handle embedding click
-    if trigger_id == "pca-embedding" and embedding_click_data:
+    if trigger_id == "umap-embedding" and embedding_click_data:
         selected_sample_id = int(embedding_click_data["points"][0]["customdata"][0])
         status_message = f"Sample {selected_sample_id} selected. Click 'Annotate (Oracle)' to label it."
 
@@ -2848,7 +2743,6 @@ def update_dashboard(
     embedding_space_mode = "model"
 
     embedding_fig, embedding_type = build_embedding_figure(
-        pca_view_mode,
         embedding_space_mode,
         current_confidence_threshold,
         sample_filter,
