@@ -2327,8 +2327,8 @@ app.layout = html.Div([
         "gap": "6px",
         "flex": "1 1 auto",
         "minHeight": "0",
-        "height": "auto",
-        "overflowY": "visible",
+        "height": "100%",
+        "overflowY": "auto",
         "overflowX": "hidden",
     }),
 
@@ -2347,9 +2347,8 @@ app.layout = html.Div([
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "auto",
-    "minHeight": "100vh",
-    "maxHeight": "none",
+    "height": "100vh",
+    "maxHeight": "100vh",
     "padding": "6px",
     "boxSizing": "border-box",
     "fontFamily": "'Segoe UI', 'Helvetica Neue', sans-serif",
