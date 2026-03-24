@@ -1302,7 +1302,8 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="← Non-Seizure  |  Seizure →",
             yaxis_title="",
             template="plotly_white",
-            height=260,
+            autosize=True,
+            height=None,
             margin=dict(l=120, r=14, t=22, b=44),
             showlegend=False,
         )
@@ -1371,7 +1372,8 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="Contribution",
             yaxis_title="",
             template="plotly_white",
-            height=260,
+            autosize=True,
+            height=None,
             margin=dict(l=120, r=14, t=14, b=44),
             barmode='relative',
             legend=dict(
@@ -2246,14 +2248,17 @@ app.layout = html.Div([
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 html.Div(id="feature-balance-bar",
                          style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
-                dcc.Graph(
-                    id="feature-importance",
-                    style={"height": "100%"},
-                    config={
-                        'responsive': True,
-                        'displayModeBar': 'hover',
-                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
-                    },
+                html.Div(
+                    dcc.Graph(
+                        id="feature-importance",
+                        style={"height": "100%", "width": "100%"},
+                        config={
+                            'responsive': True,
+                            'displayModeBar': 'hover',
+                            'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+                        },
+                    ),
+                    style={"flex": "1", "minHeight": "0", "width": "100%"}
                 ),
             ], className="viz-panel", style={
                 "minWidth": "0",
@@ -2890,7 +2895,8 @@ def update_dashboard(
         feature_fig.update_layout(
             title="No sample selected or in queue",
             template="plotly_white",
-            height=260,
+            autosize=True,
+            height=None,
             margin=dict(l=120, r=14, t=22, b=44),
         )
         feature_balance_bar = ""
