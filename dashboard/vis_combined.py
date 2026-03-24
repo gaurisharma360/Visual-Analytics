@@ -1327,15 +1327,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             font=dict(size=8, color="#dc2626"),
         )
 
-        method_label = "SHAP log-odds" if method == "shap-logodds" else "Linear fallback"
-        fig.add_annotation(
-            text=f"{method_label} | Base={base_value:+.3f} | Logit={logit:+.3f} | P(seizure)={pred_prob:.3f}",
-            xref="paper", yref="paper", x=0.5, y=-0.16,
-            showarrow=False,
-            font=dict(size=8, color="#475569"),
-        )
-
-
     else:  # uncertainty mode
         # Uncertainty Explanation View
         positive_mask = attributions > 0
@@ -1398,14 +1389,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         # Add vertical line at 0
         fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
-
-        fig.add_annotation(
-            text=f"Unc={uncertainty:.3f} | P(seizure)={pred_prob:.3f}",
-            xref="paper", yref="paper",
-            x=0.5, y=-0.14,
-            showarrow=False,
-            font=dict(size=8, color="#666"),
-        )
 
     return fig
 
@@ -2890,10 +2873,11 @@ def update_dashboard(
 
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
-        # Generate decision panel content for Feature Importance panel
-        _, feature_balance_bar, _ = generate_feature_panel_content(
+        # Render the model summary banner above the feature plot.
+        decision_header, _, _ = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
+        feature_balance_bar = decision_header
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
