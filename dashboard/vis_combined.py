@@ -989,7 +989,8 @@ def build_sankey_confusion(y_true, y_pred):
     source = [0, 0, 1, 1]
     target = [2, 3, 2, 3]
     values = [tn, fp, fn, tp]
-    colors = ["#2563eb", "#ef4444", "#f97316", "#22c55e"]
+    # Order: TN, FP, FN, TP
+    colors = ["#2563eb", "#22c55e", "#f97316", "#991b1b"]
 
     # Hover text with exact confusion matrix counts.
     hover_text = [
@@ -1071,9 +1072,9 @@ def build_multiround_sankey(pred_history, y_true):
     }
     category_color = {
         (0, 0): "#2563eb",
-        (0, 1): "#ef4444",
+        (0, 1): "#22c55e",
         (1, 0): "#f97316",
-        (1, 1): "#22c55e",
+        (1, 1): "#991b1b",
     }
 
     round_category_counts = []
