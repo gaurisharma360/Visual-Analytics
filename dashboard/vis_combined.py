@@ -5,7 +5,7 @@
 # ==========================================================
 #
 #
-
+#for recording
 import warnings
 import importlib
 import os
@@ -2177,13 +2177,14 @@ app.layout = html.Div([
                 ], className="radio-controls control-row",
                     style={"display": "flex", "gap": "4px", "flexWrap": "wrap", "paddingTop": "2px"}),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
 
@@ -2203,20 +2204,23 @@ app.layout = html.Div([
                     style={"fontSize": "9px", "paddingTop": "2px"},
                 ),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
         ], className="workspace-row workspace-row-top", style={
             "display": "grid",
             "gridTemplateColumns": "2fr 1fr",
-            "gap": "12px",
-            "height": "320px",
+            "gap": "6px",
+            "alignItems": "stretch",
+                        "flex": "1",
+            "minHeight": "0",
         }),
 
         html.Div([
@@ -2226,13 +2230,14 @@ app.layout = html.Div([
                 dcc.Graph(id="eeg-graph", style={"height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
-                "padding": "5px",
+                "padding": "4px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
 
@@ -2251,20 +2256,23 @@ app.layout = html.Div([
                     },
                 ),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
         ], className="workspace-row workspace-row-middle", style={
+                        "flex": "1",
             "display": "grid",
             "gridTemplateColumns": "2fr 1fr",
-            "gap": "12px",
-            "height": "320px",
+            "gap": "6px",
+            "alignItems": "stretch",
+            "minHeight": "0",
         }),
 
         html.Div([
@@ -2274,13 +2282,14 @@ app.layout = html.Div([
                 dcc.Graph(id="confusion-heatmap", style={"height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
-                "padding": "5px",
+                "padding": "4px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
 
@@ -2290,26 +2299,31 @@ app.layout = html.Div([
                 dcc.Graph(id="learning-curve", style={"height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
                 "backgroundColor": "#ffffff",
                 "border": "1px solid #e2e8f0",
                 "borderRadius": "8px",
                 "padding": "5px",
                 "display": "flex",
                 "flexDirection": "column",
-                "height": "100%",
                 "overflow": "hidden",
             }),
         ], className="workspace-row workspace-row-bottom", style={
+                        "flex": "1",
             "display": "grid",
             "gridTemplateColumns": "2fr 1fr",
-            "gap": "12px",
-            "height": "320px",
+            "gap": "6px",
+            "alignItems": "stretch",
+            "minHeight": "0",
         }),
     ], className="main-workspace workspace-grid", style={
         "display": "flex",
         "flexDirection": "column",
-        "gap": "12px",
-        "height": "calc(100vh - 140px)",
+        "gap": "6px",
+        "flex": "1 1 auto",
+        "minHeight": "0",
+        "height": "100%",
         "overflowY": "auto",
         "overflowX": "hidden",
     }),
