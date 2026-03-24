@@ -68,6 +68,10 @@ body,
     white-space: nowrap;
 }
 
+.js-plotly-plot {
+    width: 100% !important;
+}
+
 .js-plotly-plot,
 .plot-container,
 .plotly-graph-div,

@@ -925,13 +925,13 @@ def build_learning_curve():
         xaxis=dict(range=[0, max_round], dtick=1, tickfont=dict(size=10), automargin=True, title_standoff=8),
         template="plotly_white",
         autosize=True,
-        margin=dict(l=50, r=90, t=24, b=52),
+        margin=dict(l=50, r=20, t=24, b=52),
         legend=dict(
             orientation="v",
             yanchor="top",
             y=1.0,
-            xanchor="left",
-            x=1.01,
+            xanchor="right",
+            x=0.98,
             font=dict(size=9),
             bgcolor="rgba(255,255,255,0.75)",
         ),
@@ -2165,7 +2165,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="pca-embedding", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="pca-embedding", style={"height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
                     dcc.RadioItems(
@@ -2207,7 +2207,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Uncertainty",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="uncertainty-histogram", style={"height": "100%"},
                           config={'responsive': True}),
                 dcc.RadioItems(
                     id="uncertainty-scale-mode",
@@ -2232,9 +2232,10 @@ app.layout = html.Div([
             }),
         ], className="workspace-row workspace-row-top", style={
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gridTemplateColumns": "2fr 1fr",
             "gap": "6px",
             "alignItems": "stretch",
+                        "flex": "1",
             "minHeight": "0",
         }),
 
@@ -2242,7 +2243,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Annotation Panel",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="eeg-graph", style={"height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
             ], className="viz-panel", style={
                 "minWidth": "0",
@@ -2263,7 +2264,7 @@ app.layout = html.Div([
                          style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
+                    style={"height": "100%"},
                     config={
                         'responsive': True,
                         'displayModeBar': 'hover',
@@ -2282,8 +2283,9 @@ app.layout = html.Div([
                 "overflow": "hidden",
             }),
         ], className="workspace-row workspace-row-middle", style={
+                        "flex": "1",
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gridTemplateColumns": "2fr 1fr",
             "gap": "6px",
             "alignItems": "stretch",
             "minHeight": "0",
@@ -2293,7 +2295,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Prediction Flow Across Rounds",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
+                dcc.Graph(id="confusion-heatmap", style={"height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
                 "minWidth": "0",
@@ -2310,7 +2312,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Learning",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="learning-curve", style={"height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
                 "minWidth": "0",
@@ -2324,8 +2326,9 @@ app.layout = html.Div([
                 "overflow": "hidden",
             }),
         ], className="workspace-row workspace-row-bottom", style={
+                        "flex": "1",
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
+            "gridTemplateColumns": "2fr 1fr",
             "gap": "6px",
             "alignItems": "stretch",
             "minHeight": "0",
@@ -2336,8 +2339,8 @@ app.layout = html.Div([
         "gap": "6px",
         "flex": "1 1 auto",
         "minHeight": "0",
-        "height": "auto",
-        "overflowY": "visible",
+        "height": "100%",
+        "overflowY": "auto",
         "overflowX": "hidden",
     }),
 
@@ -2356,8 +2359,7 @@ app.layout = html.Div([
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "auto",
-    "minHeight": "100vh",
+    "height": "100vh",
     "maxHeight": "none",
     "padding": "6px",
     "boxSizing": "border-box",
