@@ -29,6 +29,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 try:
     from umap import UMAP
+
     UMAP_AVAILABLE = True
     UMAP_IMPORT_ERROR = None
 except ImportError:
@@ -62,7 +63,6 @@ import plotly.express as px
 # ==========================================================
 # GLOBAL RANDOM SEED
 # ==========================================================
-
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
@@ -238,7 +238,8 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
         return np.sqrt(uniform_filter1d(x ** 2, size=window_size, mode="nearest"))
 
     def _window_p2p(x):
-        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size, mode="nearest")
+        return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size,
+                                                                                        mode="nearest")
 
     def _top_mask(score, pct=75):
         threshold = np.percentile(score, pct)
@@ -461,7 +462,8 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         html.Span("Model Decision  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
         html.Span("Prediction: ", style={"fontSize": "10px", "color": "#6b7280"}),
         html.Span(pred_label, style={"fontWeight": "700", "fontSize": "11px", "color": pred_color}),
-        html.Span(f"  P(seizure): {pred_prob:.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
+        html.Span(f"  P(seizure): {pred_prob:.2f}",
+                  style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Base: {base_value:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Score: {logit:+.2f}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
         html.Span(f"  Method: {method_text}", style={"fontSize": "10px", "color": "#6b7280", "marginLeft": "6px"}),
@@ -532,7 +534,8 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             lines.append("↑ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
         if top_against:
             lines.append("↓ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
-        lines.append(f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
+        lines.append(
+            f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
         reflection = html.Div([
             html.Span("Model reasoning:  ", style={"fontWeight": "700", "fontSize": "10px", "color": "#374151"}),
             html.Span("  ".join(lines), style={"fontSize": "9px", "color": "#374151", "lineHeight": "1.5"}),
@@ -561,7 +564,8 @@ def get_clinical_feature_explanation(feature_name):
         "Skewness": "High skewness indicates waveform asymmetry, which may arise from non-sinusoidal epileptiform patterns.",
         "Mean": "Baseline drift in the local mean may reveal slow shifts in underlying cortical potential dynamics.",
     }
-    return explanation_map.get(feature_name, "This feature captures a model-relevant EEG pattern for the current segment.")
+    return explanation_map.get(feature_name,
+                               "This feature captures a model-relevant EEG pattern for the current segment.")
 
 
 # ==========================================================
@@ -630,6 +634,13 @@ def train_model(X_train, y_train, subjects_train):
     )
 
     grid.fit(X_train, y_train)
+
+    # Print best hyperparameters to terminal
+    best_c = grid.best_params_.get("clf__C")
+    best_penalty = grid.best_params_.get("clf__penalty")
+    best_cv_score = grid.best_score_
+    print(f"[GRIDSEARCH] Best C: {best_c} | Best Penalty: {best_penalty} | Best CV Score: {best_cv_score:.4f}")
+
     return grid.best_estimator_
 
 
@@ -823,6 +834,7 @@ def initialize_active_learning():
     global annotation_queue, selected_sample_id
     global annotations_this_round
     global previous_predictions, prediction_history, test_prediction_history, sankey_fig_cache, feature_panel_cache, stable_rounds, stop_active_learning
+    global shap_explainer
 
     train_history = []
     test_history = []
@@ -850,8 +862,8 @@ def initialize_active_learning():
         y_train[labeled_idx],
         subjects_train[labeled_idx],
     )
-
-    initialize_shap_explainer()
+    # SHAP should refresh only after explicit training actions.
+    shap_explainer = None
 
     X_train_umap_model_dgrid = compute_model_umap_embedding()
 
@@ -913,13 +925,13 @@ def build_learning_curve():
         xaxis=dict(range=[0, max_round], dtick=1, tickfont=dict(size=10), automargin=True, title_standoff=8),
         template="plotly_white",
         autosize=True,
-        margin=dict(l=50, r=90, t=24, b=52),
+        margin=dict(l=50, r=20, t=24, b=52),
         legend=dict(
             orientation="v",
             yanchor="top",
             y=1.0,
-            xanchor="left",
-            x=1.01,
+            xanchor="right",
+            x=0.98,
             font=dict(size=9),
             bgcolor="rgba(255,255,255,0.75)",
         ),
@@ -977,7 +989,8 @@ def build_sankey_confusion(y_true, y_pred):
     source = [0, 0, 1, 1]
     target = [2, 3, 2, 3]
     values = [tn, fp, fn, tp]
-    colors = ["#2563eb", "#ef4444", "#f97316", "#22c55e"]
+    # Order: TN, FP, FN, TP
+    colors = ["#2563eb", "#22c55e", "#f97316", "#991b1b"]
 
     # Hover text with exact confusion matrix counts.
     hover_text = [
@@ -1039,7 +1052,7 @@ def build_multiround_sankey(pred_history, y_true):
                     xref="paper",
                     yref="paper",
                     showarrow=False,
-                    font=dict(size=12, color="#ffffff"),
+                    font=dict(size=12, color="#64748b"),
                 )
             ],
         )
@@ -1059,9 +1072,9 @@ def build_multiround_sankey(pred_history, y_true):
     }
     category_color = {
         (0, 0): "#2563eb",
-        (0, 1): "#ef4444",
+        (0, 1): "#22c55e",
         (1, 0): "#f97316",
-        (1, 1): "#22c55e",
+        (1, 1): "#991b1b",
     }
 
     round_category_counts = []
@@ -1223,7 +1236,8 @@ def _build_embedding_boundary_trace(embedding_coords):
         y=yy[:, 0],
         z=zz,
         showscale=False,
-        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none", showlines=True),
+        contours=dict(start=SEIZURE_PROB_THRESHOLD, end=SEIZURE_PROB_THRESHOLD, size=1, coloring="none",
+                      showlines=True),
         line=dict(color="black", width=2, dash="dash"),
         name="Decision Boundary",
         hoverinfo="skip",
@@ -1313,15 +1327,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             font=dict(size=8, color="#dc2626"),
         )
 
-        method_label = "SHAP log-odds" if method == "shap-logodds" else "Linear fallback"
-        fig.add_annotation(
-            text=f"{method_label} | Base={base_value:+.3f} | Logit={logit:+.3f} | P(seizure)={pred_prob:.3f}",
-            xref="paper", yref="paper", x=0.5, y=-0.16,
-            showarrow=False,
-            font=dict(size=8, color="#475569"),
-        )
-
-
     else:  # uncertainty mode
         # Uncertainty Explanation View
         positive_mask = attributions > 0
@@ -1384,14 +1389,6 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         # Add vertical line at 0
         fig.add_vline(x=0, line_dash="dash", line_color="black", line_width=1)
-
-        fig.add_annotation(
-            text=f"Unc={uncertainty:.3f} | P(seizure)={pred_prob:.3f}",
-            xref="paper", yref="paper",
-            x=0.5, y=-0.14,
-            showarrow=False,
-            font=dict(size=8, color="#666"),
-        )
 
     return fig
 
@@ -1737,7 +1734,7 @@ def build_embedding_figure(pca_view_mode, embedding_space_mode, confidence_thres
     return embedding_fig, embedding_type
 
 
-def build_uncertainty_histogram(confidence_threshold):
+def build_uncertainty_histogram(confidence_threshold, scale_mode="log"):
     all_train_probs = model.predict_proba(X_train)
     all_train_uncertainty = 1 - np.max(all_train_probs, axis=1)
     all_train_confidence = np.max(all_train_probs, axis=1)
@@ -1840,11 +1837,13 @@ def build_uncertainty_histogram(confidence_threshold):
         annotation_position="top left",
     )
 
+    use_log_scale = scale_mode != "linear"
+
     hist_fig.update_layout(
         title=None,
         title_font=dict(size=14),
         xaxis_title="Uncertainty (1 - max_confidence)",
-        yaxis_title="Count (log)",
+        yaxis_title="Count (log)" if use_log_scale else "Count (linear)",
         barmode="stack",
         bargap=0.1,
         template="plotly_white",
@@ -1864,9 +1863,9 @@ def build_uncertainty_histogram(confidence_threshold):
         ),
         xaxis=dict(tickfont=dict(size=9), automargin=True, title_standoff=6),
         yaxis=dict(
-            type="log",
+            type="log" if use_log_scale else "linear",
             tickfont=dict(size=9),
-            dtick=1,
+            dtick=1 if use_log_scale else None,
             automargin=True,
             title_standoff=6,
         ),
@@ -1990,7 +1989,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div([
-    dcc.Location(id="url", refresh=True),
+    dcc.Location(id="url", refresh=False),
     dcc.Store(id="perturbation-mode-store", data=False),  # Track perturbation mode
     dcc.Store(id="current-sample-store", data=0),  # Track current sample index
     dcc.Store(id="selected-features-store", data=[]),  # Multi-select feature state
@@ -2032,22 +2031,6 @@ app.layout = html.Div([
                 style={
                     "marginLeft": "8px",
                     "backgroundColor": "#0f766e",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "padding": "8px 12px",
-                    "fontWeight": "600",
-                    "cursor": "pointer",
-                    "fontSize": "clamp(10px, 1.2vw, 13px)",
-                    "whiteSpace": "nowrap",
-                },
-            ),
-            html.Button(
-                "Reset",
-                id="reset-btn",
-                style={
-                    "marginLeft": "8px",
-                    "backgroundColor": "#475569",
                     "color": "white",
                     "border": "none",
                     "borderRadius": "8px",
@@ -2108,9 +2091,8 @@ app.layout = html.Div([
     # KPI + universal confidence control
     html.Div([
         html.Div([
-            html.Span("R", style={"fontWeight": "700", "color": "#334155", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
             html.Span(id="round-display",
-                      style={"marginLeft": "4px", "color": "#0f172a", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
+                      style={"color": "#0f172a", "fontSize": "clamp(10px, 1.3vw, 12px)"}),
         ], style={"whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
         html.Div([
             html.Span("Labeled",
@@ -2167,7 +2149,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3(id="embedding-title", children="UMAP Embedding View",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="pca-embedding", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="pca-embedding", style={"height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
                 html.Div([
                     dcc.RadioItems(
@@ -2209,8 +2191,18 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Uncertainty",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="uncertainty-histogram", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="uncertainty-histogram", style={"height": "100%"},
                           config={'responsive': True}),
+                dcc.RadioItems(
+                    id="uncertainty-scale-mode",
+                    options=[
+                        {"label": " Log", "value": "log"},
+                        {"label": " Linear", "value": "linear"},
+                    ],
+                    value="log",
+                    inline=True,
+                    style={"fontSize": "9px", "paddingTop": "2px"},
+                ),
             ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
@@ -2222,11 +2214,12 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-top", style={
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
-            "gap": "6px",
+            "gridTemplateColumns": "2fr 1fr",
+            "gap": "12px",
             "alignItems": "stretch",
+                        "flex": "1",
             "minHeight": "0",
         }),
 
@@ -2234,8 +2227,60 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Annotation Panel",
                         style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="eeg-graph", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="eeg-graph", style={"height": "100%"},
                           config={'responsive': True, 'displayModeBar': 'hover'}),
+            ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "4px",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflow": "hidden",
+            }),
+
+            html.Div([
+                html.H3("Feature Importance",
+                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
+                html.Div(id="feature-balance-bar",
+                         style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
+                dcc.Graph(
+                    id="feature-importance",
+                    style={"height": "100%"},
+                    config={
+                        'responsive': True,
+                        'displayModeBar': 'hover',
+                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+                    },
+                ),
+            ], className="viz-panel", style={
+                "minWidth": "0",
+                "minHeight": "0",
+                "backgroundColor": "#ffffff",
+                "border": "1px solid #e2e8f0",
+                "borderRadius": "8px",
+                "padding": "5px",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflow": "hidden",
+            }),
+        ], className="workspace-row workspace-row-middle", style={
+                        "flex": "1",
+            "display": "grid",
+            "gridTemplateColumns": "2fr 1fr",
+            "gap": "12px",
+            "alignItems": "stretch",
+            "minHeight": "0",
+        }),
+
+        html.Div([
+            html.Div([
+                html.H3("Prediction Flow Across Rounds",
+                        style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
+                dcc.Graph(id="confusion-heatmap", style={"height": "100%"},
+                          config={'responsive': True}),
             ], className="viz-panel", style={
                 "minWidth": "0",
                 "minHeight": "0",
@@ -2251,7 +2296,7 @@ app.layout = html.Div([
             html.Div([
                 html.H3("Learning",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                dcc.Graph(id="learning-curve", style={"flex": "1 1 auto", "minHeight": "200px"},
+                dcc.Graph(id="learning-curve", style={"height": "100%"},
                           config={'responsive': True}),
             ], className="viz-panel", style={
                 "minWidth": "0",
@@ -2264,72 +2309,22 @@ app.layout = html.Div([
                 "flexDirection": "column",
                 "overflow": "hidden",
             }),
-        ], style={
+        ], className="workspace-row workspace-row-bottom", style={
+                        "flex": "1",
             "display": "grid",
-            "gridTemplateColumns": "2.6fr 1.4fr",
-            "gap": "6px",
-            "alignItems": "stretch",
-            "minHeight": "0",
-        }),
-
-        html.Div([
-            html.Div([
-                html.H3("Feature Importance",
-                        style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
-                html.Div(id="feature-balance-bar"),
-                dcc.Graph(
-                    id="feature-importance",
-                    style={"flex": "1 1 auto", "minHeight": "180px"},
-                    config={
-                        'responsive': True,
-                        'displayModeBar': 'hover',
-                        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
-                    },
-                ),
-                html.Div(id="feature-reflection-text"),
-            ], className="viz-panel", style={
-                "minWidth": "0",
-                "minHeight": "0",
-                "backgroundColor": "#ffffff",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "8px",
-                "padding": "5px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
-            }),
-
-            html.Div([
-                html.H3("Prediction Flow Across Rounds",
-                        style={"margin": "0 0 3px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.5vw, 12px)"}),
-                dcc.Graph(id="confusion-heatmap", style={"flex": "1 1 auto", "minHeight": "180px"},
-                          config={'responsive': True}),
-            ], className="viz-panel", style={
-                "minWidth": "0",
-                "minHeight": "0",
-                "backgroundColor": "#ffffff",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "8px",
-                "padding": "4px",
-                "display": "flex",
-                "flexDirection": "column",
-                "overflow": "hidden",
-            }),
-        ], style={
-            "display": "grid",
-            "gridTemplateColumns": "1fr 1fr",
-            "gap": "6px",
+            "gridTemplateColumns": "2fr 1fr",
+            "gap": "12px",
             "alignItems": "stretch",
             "minHeight": "0",
         }),
     ], className="main-workspace workspace-grid", style={
         "display": "flex",
         "flexDirection": "column",
-        "gap": "6px",
+        "gap": "12px",
         "flex": "1 1 auto",
         "minHeight": "0",
-        "height": "auto",
-        "overflowY": "visible",
+        "height": "100%",
+        "overflowY": "auto",
         "overflowX": "hidden",
     }),
 
@@ -2342,15 +2337,13 @@ app.layout = html.Div([
             dcc.Slider(id="slider-beta", min=-3, max=3, step=0.1, value=0),
             dcc.Slider(id="slider-kurtosis", min=-3, max=3, step=0.1, value=0),
             html.Div(id="perturbed-prediction"),
-            html.Button("Reset", id="reset-perturbation"),
         ]),
         html.Div(id="perturbation-placeholder"),
     ], style={"display": "none"}),
 ], style={
     "display": "flex",
     "flexDirection": "column",
-    "height": "auto",
-    "minHeight": "100vh",
+    "height": "100vh",
     "maxHeight": "none",
     "padding": "6px",
     "boxSizing": "border-box",
@@ -2369,18 +2362,17 @@ app.layout = html.Div([
     Output("selected-features-store", "data"),
     Input("feature-importance", "clickData"),
     Input("clear-features-btn", "n_clicks"),
-    Input("reset-btn", "n_clicks"),
     State("selected-features-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_features):
-    """Toggle feature selection on bar click and clear via button/reset."""
+def toggle_feature_selection(click_data, clear_clicks, selected_features):
+    """Toggle feature selection on bar click and clear via button."""
     selected_features = list(selected_features or [])
 
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
-    if trigger_id in {"clear-features-btn", "reset-btn"}:
+    if trigger_id == "clear-features-btn":
         return []
 
     if trigger_id == "feature-importance" and click_data and "points" in click_data:
@@ -2391,6 +2383,7 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
             selected_features.append(feature)
 
     return selected_features
+
 
 @app.callback(
     Output("eeg-graph", "figure"),
@@ -2411,16 +2404,15 @@ def toggle_feature_selection(click_data, clear_clicks, reset_clicks, selected_fe
     Output("queue-status", "children"),
     Output("current-sample-store", "data"),
     Output("feature-balance-bar", "children"),
-    Output("feature-reflection-text", "children"),
     Input("url", "pathname"),
     Input("annotate-btn", "n_clicks"),
     Input("train-btn", "n_clicks"),
     Input("confidence-slider", "value"),
-    Input("reset-btn", "n_clicks"),
     Input("pca-view-mode", "value"),
     Input("pca-embedding", "clickData"),  # Capture embedding clicks
     Input("load-uncertain-btn", "n_clicks"),  # NEW: Load top-K button
     Input("sample-filter", "value"),  # NEW: Sample filter
+    Input("uncertainty-scale-mode", "value"),
     Input("selected-features-store", "data"),
     prevent_initial_call=False,
 )
@@ -2429,11 +2421,11 @@ def update_dashboard(
         annotate_clicks,
         train_clicks,
         confidence_value,
-        reset_clicks,
         pca_view_mode,
         embedding_click_data,  # NEW
         load_uncertain_clicks,  # NEW
         sample_filter,  # NEW
+        uncertainty_scale_mode,
         selected_features_store,
 ):
     global labeled_idx, unlabeled_idx
@@ -2450,15 +2442,15 @@ def update_dashboard(
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
     selected_features = list(selected_features_store or [])
 
-    if trigger_id in ["url", "reset-btn"]:
+    if trigger_id == "url":
         initialize_active_learning()
 
     status_message = "Annotation Phase"
 
-    if stop_active_learning and trigger_id not in ["url", "reset-btn"]:
+    if stop_active_learning and trigger_id != "url":
         status_message = (
             "Stopping criterion met: predictions stable and no uncertain samples. "
-            "Reset to start a new run."
+            "Reload the page to start a new run."
         )
 
     # Handle embedding click
@@ -2469,7 +2461,7 @@ def update_dashboard(
     # NEW: Handle load top-K uncertain button
     if trigger_id == "load-uncertain-btn":
         if stop_active_learning:
-            status_message = "Active learning has converged. Click Reset to run again."
+            status_message = "Active learning has converged. Reload the page to run again."
         else:
             current_batch, batch_auto_count, pool_auto_count = compute_batch(current_confidence_threshold)
 
@@ -2505,7 +2497,7 @@ def update_dashboard(
     # NEW: Modified annotate logic to work with queue
     if trigger_id == "annotate-btn" and phase == "annotation":
         if stop_active_learning:
-            status_message = "Active learning has converged. Click Reset to run again."
+            status_message = "Active learning has converged. Reload the page to run again."
 
         if annotations_this_round >= batch_size:
             phase = "training"
@@ -2521,10 +2513,10 @@ def update_dashboard(
                 annotation_queue.append(int(selected_sample_id))
 
         if (
-            not stop_active_learning
-            and phase == "annotation"
-            and len(annotation_queue) > 0
-            and current_pointer < len(annotation_queue)
+                not stop_active_learning
+                and phase == "annotation"
+                and len(annotation_queue) > 0
+                and current_pointer < len(annotation_queue)
         ):
             sample_id = int(annotation_queue.pop(current_pointer))
             if sample_id in unlabeled_idx:
@@ -2547,9 +2539,9 @@ def update_dashboard(
                 selected_sample_id = None
                 status_message = f"Annotated ({annotations_this_round}/{batch_size}). Select next sample or load Top-K uncertain."
 
-    if trigger_id == "train-btn" and (phase == "training" or annotations_this_round > 0):
-        if stop_active_learning:
-            status_message = "Active learning already converged. Click Reset to run again."
+    if trigger_id == "train-btn" and not stop_active_learning:
+        if False:  # Removed redundant check
+            status_message = "Active learning already converged. Reload the page to run again."
         else:
             round_number += 1
 
@@ -2572,9 +2564,15 @@ def update_dashboard(
             sensitivity_new = tp / (tp + fn) if (tp + fn) else 0
             specificity_new = tn / (tn + fp) if (tn + fp) else 0
 
+            # Extract and print hyperparameters from trained model
+            trained_clf = model.named_steps['clf']
+            c_value = trained_clf.C
+            penalty = trained_clf.penalty
+
             print(
                 f"[ROUND {round_number}] TN={tn} FP={fp} FN={fn} TP={tp} "
-                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f}"
+                f"| Sensitivity={sensitivity_new:.4f} Specificity={specificity_new:.4f} "
+                f"| C={c_value} | Penalty={penalty}"
             )
 
             # Record history for this round
@@ -2729,15 +2727,19 @@ def update_dashboard(
             title=f"Sample {selected_sample_id}",
             xaxis_title="Time (samples)",
             yaxis_title="Amplitude (μV)",
+            xaxis=dict(
+                automargin=True,
+                title_standoff=10,
+            ),
             yaxis=dict(range=[GLOBAL_Y_MIN, GLOBAL_Y_MAX]),
             template="plotly_white",
-            margin=dict(l=50, r=20, t=60, b=50),
+            margin=dict(l=50, r=20, t=60, b=90),
             autosize=True,
             hovermode="x unified",
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
-                y=-0.3,
+                y=-0.4,
                 xanchor="center",
                 x=0.5,
                 font=dict(size=10),
@@ -2769,11 +2771,11 @@ def update_dashboard(
     # Button states
     annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
     if (
-        phase == "annotation"
-        and annotations_this_round < batch_size
-        and pending_queue == 0
-        and selected_sample_id is not None
-        and selected_sample_id not in labeled_idx
+            phase == "annotation"
+            and annotations_this_round < batch_size
+            and pending_queue == 0
+            and selected_sample_id is not None
+            and selected_sample_id not in labeled_idx
     ):
         annotate_disabled = False
     train_disabled = stop_active_learning or annotations_this_round == 0
@@ -2785,10 +2787,10 @@ def update_dashboard(
     if stop_active_learning:
         status_message = (
             "Stopping criterion met: predictions stable and no uncertain samples. "
-            "Reset to start a new run."
+            "Reload the page to start a new run."
         )
 
-    if trigger_id in [None, "url", "reset-btn"]:
+    if trigger_id in [None, "url"]:
         pending_queue = max(0, len(annotation_queue) - current_pointer)
         status_message = (
             f"Annotation Phase | Annotated: {annotations_this_round}/{batch_size} | "
@@ -2797,19 +2799,37 @@ def update_dashboard(
         )
         annotate_disabled = stop_active_learning or not (phase == "annotation" and pending_queue > 0)
         if (
-            phase == "annotation"
-            and annotations_this_round < batch_size
-            and pending_queue == 0
-            and selected_sample_id is not None
-            and selected_sample_id not in labeled_idx
+                phase == "annotation"
+                and annotations_this_round < batch_size
+                and pending_queue == 0
+                and selected_sample_id is not None
+                and selected_sample_id not in labeled_idx
         ):
             annotate_disabled = False
         train_disabled = stop_active_learning or annotations_this_round == 0
         confidence_slider_disabled = phase != "annotation"
 
     # Show multi-round test-set flow (round-to-round TN/FP/FN/TP transitions).
-    sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
-    sankey_output = sankey_fig_cache
+    # Rebuild only when it can actually change (initial load/train).
+    sankey_output = dash.no_update
+    if trigger_id in [None, "url", "train-btn"] or sankey_fig_cache is None:
+        sankey_fig_cache = build_multiround_sankey(test_prediction_history, y_test)
+        sankey_output = sankey_fig_cache
+
+    # SAFETY SYNC: Ensure all history arrays are in sync before plotting
+    min_len = min(
+        len(round_history),
+        len(train_history),
+        len(test_history),
+        len(sensitivity_history),
+        len(specificity_history)
+    )
+    round_history[:] = round_history[:min_len]
+    train_history[:] = train_history[:min_len]
+    test_history[:] = test_history[:min_len]
+    sensitivity_history[:] = sensitivity_history[:min_len]
+    specificity_history[:] = specificity_history[:min_len]
+
     learning_curve_fig = build_learning_curve()
 
     # Embedding-space toggle removed from UI; keep model-space embedding fixed.
@@ -2821,35 +2841,49 @@ def update_dashboard(
         current_confidence_threshold,
         sample_filter,
     )
-    uncertainty_hist = build_uncertainty_histogram(current_confidence_threshold)
+    uncertainty_hist = build_uncertainty_histogram(
+        current_confidence_threshold,
+        uncertainty_scale_mode,
+    )
 
     # Keep feature contributions hidden unless the EEG panel is actively showing a sample.
     importance_mode = "contribution"
     selected_feature = selected_features[-1] if selected_features else None
 
-    use_cached_feature_panel = trigger_id == "annotate-btn" and feature_panel_cache is not None
+    current_feature_sample_idx = None
+    if eeg_sample_available:
+        if selected_sample_id is not None:
+            current_feature_sample_idx = int(selected_sample_id)
+        elif len(annotation_queue) > 0 and current_pointer < len(annotation_queue):
+            current_feature_sample_idx = int(annotation_queue[current_pointer])
+
+    cache_matches_context = (
+            feature_panel_cache is not None
+            and feature_panel_cache.get("sample_idx") == current_feature_sample_idx
+            and feature_panel_cache.get("selected_features") == tuple(selected_features)
+    )
+
+    use_cached_feature_panel = trigger_id == "annotate-btn" and cache_matches_context
 
     if use_cached_feature_panel:
         feature_fig = feature_panel_cache["feature_fig"]
         feature_balance_bar = feature_panel_cache["feature_balance_bar"]
-        feature_reflection_text = feature_panel_cache["feature_reflection_text"]
     elif eeg_sample_available:
-        if selected_sample_id is not None:
-            feature_sample_idx = int(selected_sample_id)
-        else:
-            feature_sample_idx = int(annotation_queue[current_pointer])
+        feature_sample_idx = int(current_feature_sample_idx)
 
         feature_fig = build_feature_importance(feature_sample_idx, importance_mode, selected_features)
 
-        # Generate decision panel content for Feature Importance panel
-        _, feature_balance_bar, feature_reflection_text = generate_feature_panel_content(
+        # Render the model summary banner above the feature plot.
+        decision_header, _, _ = generate_feature_panel_content(
             feature_sample_idx, selected_feature
         )
+        feature_balance_bar = decision_header
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
+            "sample_idx": feature_sample_idx,
+            "selected_features": tuple(selected_features),
         }
     else:
         feature_fig = go.Figure()
@@ -2860,12 +2894,12 @@ def update_dashboard(
             margin=dict(l=120, r=14, t=22, b=44),
         )
         feature_balance_bar = ""
-        feature_reflection_text = ""
 
         feature_panel_cache = {
             "feature_fig": feature_fig,
             "feature_balance_bar": feature_balance_bar,
-            "feature_reflection_text": feature_reflection_text,
+            "sample_idx": None,
+            "selected_features": tuple(selected_features),
         }
 
     round_display = f"Round {round_number}"
@@ -2896,7 +2930,6 @@ def update_dashboard(
         queue_status,
         current_sample_idx,
         feature_balance_bar,
-        feature_reflection_text,
     )
 
 
@@ -3017,19 +3050,6 @@ def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_s
         return f"Error: {str(e)}"
 
 
-@app.callback(
-    Output("slider-delta", "value"),
-    Output("slider-theta", "value"),
-    Output("slider-beta", "value"),
-    Output("slider-kurtosis", "value"),
-    Input("reset-perturbation", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reset_perturbation_sliders(n_clicks):
-    """Reset all perturbation sliders to 0."""
-    return 0, 0, 0, 0
-
-
 if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("COMBINED DASHBOARD - FINAL VERSION")
@@ -3052,5 +3072,4 @@ if __name__ == "__main__":
     print("5. Click feature bars to see EEG evidence")
     print("=" * 70 + "\n")
 
-    app.run(debug=True)
-
+    app.run(debug=True, use_reloader=True)
