@@ -2191,7 +2191,7 @@ app.layout = html.Div([
             }),
 
             html.Div([
-                html.H3("Uncertainty",
+                html.H3("Uncertainity Histogram",
                         style={"margin": "0 0 4px 0", "color": "#0f172a", "fontSize": "clamp(11px, 1.6vw, 13px)"}),
                 dcc.Graph(id="uncertainty-histogram", style={"height": "100%"},
                           config={'responsive': True}),
