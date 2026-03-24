@@ -1292,15 +1292,14 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         fig.update_layout(
             title=None,
-            xaxis_title="← Non-Seizure  |  Seizure →",
+            xaxis_title="",
             yaxis_title="",
             template="plotly_white",
-            height=260,
-            margin=dict(l=120, r=14, t=22, b=44),
+            margin=dict(l=120, r=14, t=34, b=78),
             showlegend=False,
         )
 
-        fig.update_xaxes(automargin=True, title_standoff=6, title_font=dict(size=9, color="#555"))
+        fig.update_xaxes(automargin=True)
         fig.update_yaxes(automargin=True)
 
         # Add vertical line at 0
@@ -1309,14 +1308,14 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
         # Group direction labels
         fig.add_annotation(
             text="AGAINST Seizure ◀",
-            xref="paper", yref="paper", x=0.0, y=1.07,
+            xref="paper", yref="paper", x=0.02, y=1.01,
             xanchor="left", showarrow=False,
             font=dict(size=8, color="#2563eb"),
         )
         fig.add_annotation(
             text="▶ FOR Seizure",
-            xref="paper", yref="paper", x=1.0, y=1.07,
-            xanchor="right", showarrow=False,
+            xref="paper", yref="paper", x=0.74, y=1.01,
+            xanchor="left", showarrow=False,
             font=dict(size=8, color="#dc2626"),
         )
 
@@ -1373,13 +1372,12 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
             xaxis_title="Contribution",
             yaxis_title="",
             template="plotly_white",
-            height=260,
-            margin=dict(l=120, r=14, t=14, b=44),
+            margin=dict(l=120, r=14, t=30, b=72),
             barmode='relative',
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
-                y=1.01,
+                y=1.02,
                 xanchor="center",
                 x=0.5,
                 font=dict(size=8),
@@ -1395,7 +1393,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
         fig.add_annotation(
             text=f"Unc={uncertainty:.3f} | P(seizure)={pred_prob:.3f}",
             xref="paper", yref="paper",
-            x=0.5, y=-0.14,
+            x=0.5, y=-0.22,
             showarrow=False,
             font=dict(size=8, color="#666"),
         )
@@ -2256,10 +2254,10 @@ app.layout = html.Div([
                 html.Div(id="feature-balance-bar", style={"minHeight": "26px", "maxHeight": "26px", "overflow": "hidden"}),
                 dcc.Graph(
                     id="feature-importance",
-                    style={"flex": "1 1 auto", "height": "260px", "minHeight": "260px"},
+                    style={"flex": "1 1 auto", "minHeight": "240px"},
                     config={
                         'responsive': True,
-                        'displayModeBar': 'hover',
+                        'displayModeBar': False,
                         'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
                     },
                 ),
@@ -2767,9 +2765,21 @@ def update_dashboard(
     else:
         eeg_fig = go.Figure()
         eeg_fig.update_layout(
-            title="No sample selected or in queue",
             template="plotly_white",
-            margin=dict(l=40, r=20, t=20, b=40),
+            margin=dict(l=24, r=24, t=24, b=24),
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            annotations=[
+                dict(
+                    text="No sample selected or in queue",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                    font=dict(size=13, color="#64748b"),
+                )
+            ],
             autosize=True,
         )
         current_sample_idx = 0
@@ -2893,10 +2903,21 @@ def update_dashboard(
     else:
         feature_fig = go.Figure()
         feature_fig.update_layout(
-            title="No sample selected or in queue",
             template="plotly_white",
-            height=260,
-            margin=dict(l=120, r=14, t=22, b=44),
+            margin=dict(l=24, r=24, t=24, b=24),
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            annotations=[
+                dict(
+                    text="No sample selected or in queue",
+                    x=0.5,
+                    y=0.5,
+                    xref="paper",
+                    yref="paper",
+                    showarrow=False,
+                    font=dict(size=13, color="#64748b"),
+                )
+            ],
         )
         feature_balance_bar = ""
 
