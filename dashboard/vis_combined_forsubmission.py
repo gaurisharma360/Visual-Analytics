@@ -1,4 +1,4 @@
-# ==========================================================
+﻿# ==========================================================
 # COMBINED ACTIVE LEARNING DASHBOARD - FINAL VERSION
 # Base: vis_combined_gourisha.py (with feature explanation)
 # Added: Interactive embedding-to-EEG from vis_combined_gauri.py
@@ -62,6 +62,7 @@ import plotly.express as px
 # ==========================================================
 # GLOBAL RANDOM SEED
 # ==========================================================
+# Central reproducibility settings and shared runtime identifiers.
 GLOBAL_RANDOM_SEED = 42
 np.random.seed(GLOBAL_RANDOM_SEED)
 
@@ -76,12 +77,14 @@ DGRID_KEY_UMAP_DATA = "UMAP-DATA"
 DGRID_KEY_UMAP_MODEL = "UMAP-MODEL"
 
 
+# Purpose: Predict binary labels using the custom seizure probability threshold.
 def predict_binary_with_threshold(X):
     """Predict binary labels using the custom seizure probability threshold."""
     seizure_probs = model.predict_proba(X)[:, 1]
     return (seizure_probs >= SEIZURE_PROB_THRESHOLD).astype(int)
 
 
+# Purpose: Print concise runtime status for data/model embedding transforms.
 def _print_dgrid_status(tag):
     """Print concise runtime status for data/model embedding transforms."""
     print(
@@ -96,7 +99,9 @@ def _print_dgrid_status(tag):
 # ==========================================================
 # DGRID TRANSFORMATION - Prevents overlapping points in embedding views
 # ==========================================================
+# Internal spread transform used to reduce overlap while preserving global structure.
 
+# Purpose: Normalize 2D coordinates to [0, 1] range with stable handling of flat axes.
 def _normalize_coords(coords):
     """Normalize 2D coordinates to [0, 1] range with stable handling of flat axes."""
     mins = np.min(coords, axis=0)
@@ -105,6 +110,7 @@ def _normalize_coords(coords):
     return (coords - mins) / ranges
 
 
+# Purpose: Cluster-preserving spread: separate close points while keeping global structure.
 def _apply_internal_dgrid(coords):
     """Cluster-preserving spread: separate close points while keeping global structure."""
     n_samples = coords.shape[0]
@@ -148,6 +154,7 @@ def _apply_internal_dgrid(coords):
     return blended * ranges + mins
 
 
+# Purpose: Apply DGrid-like layout using the internal fallback backend only.
 def apply_dgrid_transform(coords, embedding_name="embedding"):
     """Apply DGrid-like layout using the internal fallback backend only."""
     coords = np.asarray(coords, dtype=float)
@@ -170,7 +177,9 @@ def apply_dgrid_transform(coords, embedding_name="embedding"):
 # ==========================================================
 # FEATURE ENGINEERING
 # ==========================================================
+# Convert raw EEG waveforms into fixed statistical and spectral feature vectors.
 
+# Purpose: Extract statistical and frequency-band EEG features for every sample.
 def extract_features(X_raw, fs=173.61):
     features = []
     for signal in X_raw:
@@ -183,6 +192,7 @@ def extract_features(X_raw, fs=173.61):
 
         freqs, psd = welch(signal, fs=fs, nperseg=256)
 
+        # Purpose: Integrate PSD values within a frequency band to compute band power.
         def band_power(fmin, fmax):
             idx = np.logical_and(freqs >= fmin, freqs <= fmax)
             return np.sum(psd[idx])
@@ -201,9 +211,11 @@ def extract_features(X_raw, fs=173.61):
 
 
 # ==========================================================
-# SIGNAL PROCESSING HELPERS FOR FEATURE→EEG MAPPING
+# SIGNAL PROCESSING HELPERS FOR FEATUREâ†’EEG MAPPING
 # ==========================================================
+# Utilities for mapping selected engineered features back onto EEG signal regions.
 
+# Purpose: Design a bandpass filter.
 def butter_bandpass(lowcut, highcut, fs, order=5):
     """Design a bandpass filter."""
     nyq = 0.5 * fs
@@ -213,6 +225,7 @@ def butter_bandpass(lowcut, highcut, fs, order=5):
     return b, a
 
 
+# Purpose: Apply bandpass filter to signal.
 def bandpass_filter(data, lowcut, highcut, fs, order=5):
     """Apply bandpass filter to signal."""
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
@@ -220,6 +233,7 @@ def bandpass_filter(data, lowcut, highcut, fs, order=5):
     return y
 
 
+# Purpose: Highlight the EEG regions corresponding to a specific feature.
 def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
     """
     Highlight the EEG regions corresponding to a specific feature.
@@ -228,18 +242,22 @@ def highlight_feature_in_eeg(signal, feature_name, fs=173.61):
     signal = np.asarray(signal, dtype=float)
     window_size = max(8, int(fs * 0.5))
 
+    # Purpose: Compute rolling standard deviation as a local variability score.
     def _window_std(x):
         mean_x = uniform_filter1d(x, size=window_size, mode="nearest")
         mean_sq_x = uniform_filter1d(x ** 2, size=window_size, mode="nearest")
         return np.sqrt(np.maximum(mean_sq_x - mean_x ** 2, 0.0))
 
+    # Purpose: Compute rolling RMS as a local signal-energy score.
     def _window_rms(x):
         return np.sqrt(uniform_filter1d(x ** 2, size=window_size, mode="nearest"))
 
+    # Purpose: Compute rolling peak-to-peak amplitude for transient detection.
     def _window_p2p(x):
         return maximum_filter1d(x, size=window_size, mode="nearest") - minimum_filter1d(x, size=window_size,
                                                                                         mode="nearest")
 
+    # Purpose: Build a boolean mask for the top percentile of a scoring signal.
     def _top_mask(score, pct=75):
         threshold = np.percentile(score, pct)
         return score >= threshold
@@ -325,6 +343,7 @@ FEATURE_HIGHLIGHT_COLORS = {
 shap_explainer = None
 
 
+# Purpose: Initialize SHAP explainer for the current trained pipeline.
 def initialize_shap_explainer():
     """Initialize SHAP explainer for the current trained pipeline."""
     global shap_explainer
@@ -350,6 +369,7 @@ def initialize_shap_explainer():
         print(f"[SHAP] FAILED | {type(exc).__name__}: {exc}")
 
 
+# Purpose: Compute exact linear contributions: logistic_weight * scaled_feature_value.
 def compute_feature_contributions(sample_idx):
     """Compute exact linear contributions: logistic_weight * scaled_feature_value."""
     if not hasattr(model.named_steps['clf'], 'coef_'):
@@ -363,6 +383,7 @@ def compute_feature_contributions(sample_idx):
     return np.asarray(FEATURE_NAMES), contributions, probs
 
 
+# Purpose: Compute per-feature attributions and additive baseline for one sample.
 def compute_feature_attributions(sample_idx):
     """Compute per-feature attributions and additive baseline for one sample."""
     sample_features = X_train[sample_idx:sample_idx + 1]
@@ -401,6 +422,7 @@ def compute_feature_attributions(sample_idx):
     }
 
 
+# Purpose: Compute logit, probability and grouped contributions for the decision panel.
 def compute_decision_summary(sample_idx):
     """Compute logit, probability and grouped contributions for the decision panel."""
     attribution_data = compute_feature_attributions(sample_idx)
@@ -436,6 +458,7 @@ def compute_decision_summary(sample_idx):
     }
 
 
+# Purpose: Return (decision_header, balance_bar, reflection_text) as Dash HTML children.
 def generate_feature_panel_content(sample_idx, selected_feature=None):
     """Return (decision_header, balance_bar, reflection_text) as Dash HTML children."""
     summary = compute_decision_summary(sample_idx)
@@ -486,7 +509,7 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             "position": "relative",
             "marginBottom": "1px",
         }, children=[
-            html.Div("▲", style={
+            html.Div("â–²", style={
                 "position": "absolute",
                 "left": f"calc({pct:.0f}% - 5px)",
                 "top": "-2px",
@@ -496,9 +519,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             }),
         ]),
         html.Div([
-            html.Span("← Non-Seizure", style={"fontSize": "8px", "color": "#2563eb"}),
+            html.Span("â† Non-Seizure", style={"fontSize": "8px", "color": "#2563eb"}),
             html.Span(f"score {logit:+.2f}", style={"fontSize": "8px", "color": "#374151"}),
-            html.Span("Seizure →", style={"fontSize": "8px", "color": "#dc2626"}),
+            html.Span("Seizure â†’", style={"fontSize": "8px", "color": "#dc2626"}),
         ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "3px"}),
     ])
 
@@ -530,9 +553,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         top_against = summary["against_seizure"][:3]
         lines = []
         if top_for:
-            lines.append("↑ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
+            lines.append("â†‘ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
         if top_against:
-            lines.append("↓ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
+            lines.append("â†“ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
         lines.append(
             f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
         reflection = html.Div([
@@ -549,6 +572,7 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
     return decision_header, balance_bar, reflection
 
 
+# Purpose: Return a concise clinical interpretation for the selected engineered feature.
 def get_clinical_feature_explanation(feature_name):
     """Return a concise clinical interpretation for the selected engineered feature."""
     explanation_map = {
@@ -570,7 +594,9 @@ def get_clinical_feature_explanation(feature_name):
 # ==========================================================
 # LOAD + SPLIT
 # ==========================================================
+# Load dataset, build labels/groups, and create subject-aware train/test split.
 
+# Purpose: Load EEG data, engineer features, and split by grouped subjects.
 def load_and_split():
     data_path = os.path.join(os.path.dirname(__file__), "..", "bonn_eeg_combined.csv")
     df = pd.read_csv(data_path)
@@ -606,7 +632,9 @@ def load_and_split():
 # ==========================================================
 # TRAIN MODEL
 # ==========================================================
+# Train the logistic-regression pipeline with group-aware cross-validated search.
 
+# Purpose: Train and tune a logistic-regression pipeline with group-aware CV.
 def train_model(X_train, y_train, subjects_train):
     pipe = Pipeline([
         ("scaler", StandardScaler()),
@@ -646,6 +674,7 @@ def train_model(X_train, y_train, subjects_train):
 # ==========================================================
 # DATA + CONSTANTS
 # ==========================================================
+# Materialize train/test arrays and initialize global configuration values.
 
 X_raw_train, X_train, X_test, y_train, y_test, subjects_train = load_and_split()
 
@@ -661,6 +690,7 @@ default_confidence_threshold = 0.7
 # ==========================================================
 # EMBEDDING PRECOMPUTE
 # ==========================================================
+# Precompute data-space embedding and initialize model-space embedding placeholders.
 
 embedding_scaler = StandardScaler()
 X_train_scaled = embedding_scaler.fit_transform(X_train)
@@ -712,7 +742,9 @@ _print_dgrid_status("pre-init")
 # ==========================================================
 # HYBRID BATCH LOGIC
 # ==========================================================
+# Active-learning bookkeeping and uncertainty-driven sample selection policy.
 
+# Purpose: Select top uncertain unlabeled samples and partition doctor vs auto decisions.
 def compute_batch(confidence_threshold):
     probs = model.predict_proba(X_train[unlabeled_idx])
     max_probs = np.max(probs, axis=1)
@@ -773,6 +805,7 @@ stability_flip_ratio_threshold = 0.01
 stability_required_rounds = 2
 
 
+# Purpose: Compute a model-space UMAP from signed contributions and confidence terms.
 def compute_model_umap_embedding():
     """Compute a model-space UMAP from signed contributions and confidence terms."""
     global model_umap
@@ -821,6 +854,7 @@ def compute_model_umap_embedding():
         return None
 
 
+# Purpose: Initialize active-learning state, seed labeled/unlabeled pools, and prime caches.
 def initialize_active_learning():
     global labeled_idx, unlabeled_idx
     global model, current_batch
@@ -881,6 +915,7 @@ def initialize_active_learning():
     stop_active_learning = False
 
 
+# Purpose: Build the round-wise performance trend plot (train/test/sensitivity/specificity).
 def build_learning_curve():
     fig = go.Figure()
 
@@ -939,6 +974,7 @@ def build_learning_curve():
     return fig
 
 
+# Purpose: Render confusion-matrix values as a compact heatmap.
 def build_confusion_heatmap(cm):
     fig = go.Figure(data=go.Heatmap(
         z=cm,
@@ -971,6 +1007,7 @@ def build_confusion_heatmap(cm):
     return fig
 
 
+# Purpose: Build a Sankey diagram showing true-to-predicted class flow with raw counts.
 def build_sankey_confusion(y_true, y_pred):
     """Build a Sankey diagram showing true-to-predicted class flow with raw counts."""
     tn = int(np.sum((y_true == 0) & (y_pred == 0)))
@@ -1035,6 +1072,7 @@ def build_sankey_confusion(y_true, y_pred):
     return fig
 
 
+# Purpose: Build Sankey showing TN/FP/FN/TP transitions across rounds using raw counts.
 def build_multiround_sankey(pred_history, y_true):
     """Build Sankey showing TN/FP/FN/TP transitions across rounds using raw counts."""
     if pred_history is None or len(pred_history) == 0:
@@ -1096,6 +1134,7 @@ def build_multiround_sankey(pred_history, y_true):
     flow_index = {}
     flow_counts = []
 
+    # Purpose: Get or create Sankey node IDs with round/category-aware labels.
     def get_node(round_idx, true_label, pred_label):
         key = (round_idx, true_label, pred_label)
         if key not in node_map:
@@ -1175,6 +1214,7 @@ def build_multiround_sankey(pred_history, y_true):
     return fig
 
 
+# Purpose: Summarize labeled/auto/doctor sample counts as a donut chart.
 def build_data_donut():
     labeled = len(labeled_idx)
     doctor = len(current_batch)
@@ -1207,6 +1247,7 @@ def build_data_donut():
     return fig
 
 
+# Purpose: Build decision boundary contour for embedding.
 def _build_embedding_boundary_trace(embedding_coords):
     """Build decision boundary contour for embedding."""
     if len(labeled_idx) < 10:
@@ -1244,6 +1285,7 @@ def _build_embedding_boundary_trace(embedding_coords):
     )
 
 
+# Purpose: Build feature importance visualization for a specific sample.
 def build_feature_importance(sample_idx, importance_mode="contribution", selected_features=None):
     """
     Build feature importance visualization for a specific sample.
@@ -1298,7 +1340,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         fig.update_layout(
             title=None,
-            xaxis_title="← Non-Seizure  |  Seizure →",
+            xaxis_title="â† Non-Seizure  |  Seizure â†’",
             yaxis_title="",
             template="plotly_white",
             height=300,
@@ -1378,6 +1420,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
     return fig
 
 
+# Purpose: Build embedding figure with DGrid transformation and sample filter.
 def build_embedding_figure(embedding_space_mode, confidence_threshold, sample_filter):
     """Build embedding figure with DGrid transformation and sample filter"""
     if not UMAP_AVAILABLE or X_train_umap_data_dgrid is None:
@@ -1627,6 +1670,7 @@ def build_embedding_figure(embedding_space_mode, confidence_threshold, sample_fi
     return embedding_fig, embedding_type
 
 
+# Purpose: Plot uncertainty distribution split by annotation source and decision path.
 def build_uncertainty_histogram(confidence_threshold, scale_mode="log"):
     all_train_probs = model.predict_proba(X_train)
     all_train_uncertainty = 1 - np.max(all_train_probs, axis=1)
@@ -1775,6 +1819,7 @@ _print_dgrid_status("post-init")
 # ==========================================================
 # DASH APP
 # ==========================================================
+# Build Dash application shell, responsive styling, and dashboard layout components.
 
 app = dash.Dash(
     __name__,
@@ -1821,16 +1866,19 @@ app.index_string = '''
 
             /* Base responsive styles */
             @media (max-width: 1400px) {
+                /* Collapse desktop multi-column layout into stacked workspace sections. */
                 .workspace-grid { grid-template-columns: 1fr !important; }
                 .left-column, .right-column { width: 100% !important; min-width: 0 !important; max-width: none !important; margin-left: 0 !important; }
                 .right-row1 { grid-template-columns: 1fr 1fr !important; }
                 .viz-panel { width: 100% !important; min-width: 0 !important; margin-left: 0 !important; margin-bottom: 10px; }
+                /* Tighten KPI density on medium-large screens. */
                 .kpi-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 4px !important; }
                 .button-group { flex-wrap: wrap; gap: 4px; }
                 .button-group button { margin-left: 0 !important; margin-top: 4px; font-size: 11px !important; padding: 6px 10px !important; }
             }
 
             @media (max-width: 1024px) {
+                /* Tablet breakpoint: stack controls and reduce label sizes to avoid clipping. */
                 .right-row1 { grid-template-columns: 1fr !important; }
                 .top-bar { flex-direction: column !important; align-items: flex-start !important; gap: 8px; }
                 .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 3px !important; font-size: 11px !important; }
@@ -1842,6 +1890,7 @@ app.index_string = '''
             }
 
             @media (max-width: 768px) {
+                /* Mobile breakpoint: force one-column KPI flow and full-width action buttons. */
                 .kpi-grid { grid-template-columns: 1fr !important; gap: 2px !important; padding: 4px !important; }
                 .top-bar h2 { font-size: 16px !important; }
                 .button-group { width: 100%; }
@@ -1863,6 +1912,7 @@ app.index_string = '''
 
             /* Keep Plotly controls from colliding with long titles */
             .js-plotly-plot .modebar {
+                /* Shrink/reposition modebar so chart titles and legends stay readable. */
                 top: 4px !important;
                 right: 4px !important;
                 transform: scale(0.88);
@@ -2266,6 +2316,7 @@ app.layout = html.Div([
 # ==========================================================
 # MAIN CALLBACK - Enhanced with embedding click interaction
 # ==========================================================
+# Orchestrate dashboard state updates for annotation, training, and visual outputs.
 
 @app.callback(
     Output("selected-features-store", "data"),
@@ -2274,6 +2325,7 @@ app.layout = html.Div([
     State("selected-features-store", "data"),
     prevent_initial_call=True,
 )
+# Purpose: Toggle feature selection on bar click and clear via button.
 def toggle_feature_selection(click_data, clear_clicks, selected_features):
     """Toggle feature selection on bar click and clear via button."""
     selected_features = list(selected_features or [])
@@ -2324,6 +2376,7 @@ def toggle_feature_selection(click_data, clear_clicks, selected_features):
     Input("selected-features-store", "data"),
     prevent_initial_call=False,
 )
+# Purpose: Main state machine for annotation, training, and synchronized dashboard outputs.
 def update_dashboard(
         pathname,
         annotate_clicks,
@@ -2633,7 +2686,7 @@ def update_dashboard(
         eeg_fig.update_layout(
             title=f"Sample {selected_sample_id}",
             xaxis_title="Time (samples)",
-            yaxis_title="Amplitude (μV)",
+            yaxis_title="Amplitude (Î¼V)",
             xaxis=dict(
                 automargin=True,
                 title_standoff=10,
@@ -2842,6 +2895,7 @@ def update_dashboard(
 # ==========================================================
 # PERTURBATION MODE CALLBACKS
 # ==========================================================
+# Toggle perturbation controls and display perturbed prediction feedback.
 
 @app.callback(
     Output("perturbation-mode-store", "data"),
@@ -2853,12 +2907,17 @@ def update_dashboard(
     State("perturbation-mode-store", "data"),
     prevent_initial_call=True,
 )
+# Purpose: Toggle perturbation mode on/off.
 def toggle_perturbation_mode(n_clicks, current_mode):
     """Toggle perturbation mode on/off."""
+    # This callback controls style-bearing outputs:
+    # - button_style updates visual affordance for on/off state,
+    # - controls_style/placeholder_style switch which panel is visible.
     new_mode = not current_mode if current_mode is not None else True
 
     if new_mode:
         button_text = "Disable Perturbation Mode"
+        # Active state: red emphasis communicates that perturbation mode is currently enabled.
         button_style = {
             "marginLeft": "20px",
             "backgroundColor": "#ef4444",
@@ -2869,10 +2928,12 @@ def toggle_perturbation_mode(n_clicks, current_mode):
             "fontSize": "11px",
             "cursor": "pointer",
         }
+        # Show perturbation sliders and hide placeholder while active.
         controls_style = {"display": "block"}
         placeholder_style = {"display": "none"}
     else:
         button_text = "Enable Perturbation Mode"
+        # Inactive state: neutral button style to indicate dormant mode.
         button_style = {
             "marginLeft": "20px",
             "backgroundColor": "#f3f4f6",
@@ -2883,6 +2944,7 @@ def toggle_perturbation_mode(n_clicks, current_mode):
             "fontSize": "11px",
             "cursor": "pointer",
         }
+        # Hide perturbation sliders and show placeholder while inactive.
         controls_style = {"display": "none"}
         placeholder_style = {"display": "block"}
 
@@ -2898,6 +2960,7 @@ def toggle_perturbation_mode(n_clicks, current_mode):
     State("current-sample-store", "data"),
     prevent_initial_call=True,
 )
+# Purpose: Compute perturbed prediction when sliders change.
 def update_perturbed_prediction(delta_shift, theta_shift, beta_shift, kurtosis_shift, sample_idx):
     """Compute perturbed prediction when sliders change."""
     if sample_idx is None or model is None:
