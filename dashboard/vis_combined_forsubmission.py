@@ -211,7 +211,7 @@ def extract_features(X_raw, fs=173.61):
 
 
 # ==========================================================
-# SIGNAL PROCESSING HELPERS FOR FEATUREâ†’EEG MAPPING
+# SIGNAL PROCESSING HELPERS FOR FEATURE->EEG MAPPING
 # ==========================================================
 # Utilities for mapping selected engineered features back onto EEG signal regions.
 
@@ -509,7 +509,7 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             "position": "relative",
             "marginBottom": "1px",
         }, children=[
-            html.Div("â–²", style={
+            html.Div("^", style={
                 "position": "absolute",
                 "left": f"calc({pct:.0f}% - 5px)",
                 "top": "-2px",
@@ -519,9 +519,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
             }),
         ]),
         html.Div([
-            html.Span("â† Non-Seizure", style={"fontSize": "8px", "color": "#2563eb"}),
+            html.Span("<- Non-Seizure", style={"fontSize": "8px", "color": "#2563eb"}),
             html.Span(f"score {logit:+.2f}", style={"fontSize": "8px", "color": "#374151"}),
-            html.Span("Seizure â†’", style={"fontSize": "8px", "color": "#dc2626"}),
+            html.Span("Seizure ->", style={"fontSize": "8px", "color": "#dc2626"}),
         ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "3px"}),
     ])
 
@@ -553,9 +553,9 @@ def generate_feature_panel_content(sample_idx, selected_feature=None):
         top_against = summary["against_seizure"][:3]
         lines = []
         if top_for:
-            lines.append("â†‘ " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
+            lines.append("[UP] " + ", ".join(n for n, _ in top_for) + " push toward seizure.")
         if top_against:
-            lines.append("â†“ " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
+            lines.append("[DOWN] " + ", ".join(n for n, _ in top_against) + " push toward non-seizure.")
         lines.append(
             f"Overall: evidence {'favors Seizure' if logit > 0 else 'favors Non-Seizure'} (score {logit:+.2f}).")
         reflection = html.Div([
@@ -1340,7 +1340,7 @@ def build_feature_importance(sample_idx, importance_mode="contribution", selecte
 
         fig.update_layout(
             title=None,
-            xaxis_title="â† Non-Seizure  |  Seizure â†’",
+            xaxis_title="<- Non-Seizure  |  Seizure ->",
             yaxis_title="",
             template="plotly_white",
             height=300,
@@ -2686,7 +2686,7 @@ def update_dashboard(
         eeg_fig.update_layout(
             title=f"Sample {selected_sample_id}",
             xaxis_title="Time (samples)",
-            yaxis_title="Amplitude (Î¼V)",
+            yaxis_title="Amplitude (uV)",
             xaxis=dict(
                 automargin=True,
                 title_standoff=10,
