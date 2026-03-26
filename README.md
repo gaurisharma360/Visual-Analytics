@@ -2,14 +2,19 @@
 
 ## About this app
 
-This is an **Active Learning EEG Dashboard** for seizure detection and classification. The app combines feature engineering, machine learning explainability (SHAP), and interactive visualizations using Dash and Plotly.
+This is an **Active Learning EEG Dashboard** for seizure detection and classification. The app combines feature engineering, machine learning explainability, and interactive visualizations using Dash and Plotly.
 
 **Key Features:**
 - EEG signal processing with statistical and spectral feature extraction
 - Active learning with uncertainty-driven sample selection
-- Model explainability with SHAP and feature attribution
+- Model explainability with  feature attribution
 - Interactive 2D embeddings (UMAP) of EEG data
+- Uncertainity histogram that gives insights on data distribution.
 - Real-time EEG highlighting based on engineered features
+- Learning Curve (showcasing Senstivity, Specificity, Test and Train Accuracy).
+- Sankey Diagram that shows prediction flow across rounds.
+- Confidence Slider 
+
 
 
 ## Requirements
@@ -28,7 +33,7 @@ We suggest you create a virtual environment for running this app with Python 3. 
 Open a command prompt and run the following commands in the project root directory:
 
 ```
-> python -m venv venv
+> python -m venv .venv
 ```
 
 If `python` is not recognized, use `python3` instead.
@@ -37,12 +42,12 @@ If `python` is not recognized, use `python3` instead.
 
 In Windows: 
 ```
-> venv\Scripts\activate
+> .venv\Scripts\activate
 ```
 
 In Unix/Linux/Mac:
 ```
-> source venv/bin/activate
+> source .venv/bin/activate
 ```
 
 **Option 2: Using Anaconda/Miniconda**
@@ -70,7 +75,7 @@ This installs the following key dependencies:
 - **numpy**, **pandas**, **scipy** - Numerical and signal processing
 - **scikit-learn** - Machine learning models and preprocessing
 - **umap-learn** - Dimensionality reduction for embedding visualization
-- **shap** - Model explainability and feature attribution
+
 
 ### Run the App
 
@@ -85,14 +90,25 @@ You can edit the code in any editor (e.g., Visual Studio Code) and refresh the b
 
 ## Data
 
-The app expects a CSV file named `bonn_eeg_combined.csv` in the project root directory with the following structure:
-- **ID**: Sample identifier
-- **Y**: Label (e.g., "E" for seizure, others for non-seizure)
-- Remaining columns: Raw EEG signal values (1D time-series data)
+The dataset we decided to use is the **University of Bonn EEG Dataset**.
+
+- **Composition**: It contains five folders, each with 100 channels of EEG segments.
+- **Recording Duration**: Each individual was recorded for 23.6 seconds.
+- **Size**: 500 EEG segments (100 segments per subset across five subsets, ensuring balanced class distribution).
+- **Data Type**: Single-channel EEG signals stored in text files (ASCII format).
+- **Sampling Rate**: 173.61 Hz, providing high temporal resolution.
+- **Segment Length**: 23.6 seconds per segment, equivalent to 4,096 data points.
+- **Labels**: Clearly defined for each segment:
+	- A: healthy, eyes open
+	- B: healthy, eyes closed
+	- C: interictal, epileptogenic zone
+	- D: interictal, opposite hemisphere
+	- E: ictal
+
+The attributes are the 4,096 continuous EEG amplitude measurements recorded sequentially over 23.6 seconds, along with a categorical class label.
 
 ## Resources
 
 * [Dash Documentation](https://dash.plot.ly/)
 * [Plotly Documentation](https://plotly.com/python/)
-* [SHAP Documentation](https://shap.readthedocs.io/)
 * [UMAP Documentation](https://umap-learn.readthedocs.io/)
