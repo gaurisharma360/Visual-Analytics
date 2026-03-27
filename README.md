@@ -9,10 +9,10 @@ This is an **Active Learning EEG Dashboard** for seizure detection and classific
 - Active learning with uncertainty-driven sample selection
 - Model explainability with  feature attribution
 - Interactive 2D embeddings (UMAP) of EEG data
-- Uncertainity histogram that gives insights on data distribution.
+- Uncertainty histogram that gives insights on data distribution.
 - Real-time EEG highlighting based on engineered features
-- Learning Curve (showcasing Senstivity, Specificity, Test and Train Accuracy).
-- Sankey Diagram that shows prediction flow across rounds.
+- Learning Curve (showcasing Sensitivity, Specificity, Test and Train Accuracy)
+- Sankey Diagram that shows prediction flow across rounds
 - Confidence Slider 
 
 
