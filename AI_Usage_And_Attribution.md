@@ -46,6 +46,7 @@ External packages execute core algorithms and rendering primitives. We configure
 ### Embedding and explainability
 - `umap-learn` (`UMAP`): 2D embedding algorithm.
 - `shap` (`LinearExplainer`): SHAP-based feature attribution when available.
+- `importlib` : dynamic optional dependency loading (e.g., SHAP).
 
 ### Dashboard and plotting
 - `dash`: app server, layout components, callback runtime.
