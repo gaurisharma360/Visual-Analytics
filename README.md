@@ -1,5 +1,5 @@
 # Visual Analytics APP
-[![Report Preview](./preview.png)](./Poster.pdf)
+[![Click Here to view the insights]](./Poster.pdf)
 
 
 ## About this app
