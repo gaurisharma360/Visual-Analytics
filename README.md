@@ -1,4 +1,5 @@
 # Visual Analytics APP
+(./Poster.pdf)
 
 ## About this app
 
