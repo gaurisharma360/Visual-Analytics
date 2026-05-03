@@ -1,5 +1,5 @@
 # Visual Analytics APP
-[![Report Preview](./preview.png)](./report.pdf)
+[![Report Preview](./preview.png)](./Poster.pdf)
 
 
 ## About this app
