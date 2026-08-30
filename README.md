@@ -1,5 +1,4 @@
 # Visual Analytics APP
-# Visual Analytics APP
 
 [📄 Click here for insights (Poster)](./Poster.pdf)
 
