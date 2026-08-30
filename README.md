@@ -1,5 +1,6 @@
 # Visual Analytics APP
 [![Click Here to view the insights]](./Poster.pdf)
+[🎥 Watch full video](./Final.mp4)
 
 
 ## About this app
