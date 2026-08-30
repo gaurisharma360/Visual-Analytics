@@ -2,6 +2,7 @@
 
 [📄 Click here for insights (Poster)](./Poster.pdf)
 
+[![Watch full video](./preview.png)](https://drive.google.com/file/d/1Un-VVl1ZT5Gv4kasSRQte9YzUHgTYyY7/view?usp=sharing)
 
 
 
