@@ -5,7 +5,6 @@
 [![Watch full video](./preview-2.png)](https://drive.google.com/file/d/1Un-VVl1ZT5Gv4kasSRQte9YzUHgTYyY7/view?usp=sharing)
 
 
-
 ## About this app
 
 This is an **Active Learning EEG Dashboard** for seizure detection and classification. The app combines feature engineering, machine learning explainability, and interactive visualizations using Dash and Plotly.
